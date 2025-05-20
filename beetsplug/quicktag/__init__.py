@@ -14,9 +14,10 @@ class QuickTagPlugin(BeetsPlugin):
         self.config.add(
             {
                 "categories": {},
-                "autoplay_next": False,  # Default value if not in config
-                "autoplay_start": False,  # Default value if not in config
-                "autosave_on_quit": False,  # Default value if not in config
+                "autoplay_on_track_change": False,
+                "autoplay_at_launch": False,
+                "autonext_at_track_end": False,
+                "autosave_on_quit": False,
             }
         )
 
@@ -38,8 +39,11 @@ class QuickTagPlugin(BeetsPlugin):
             return
 
         categories_config = self.config["categories"].get(dict)
-        autoplay_next_enabled = self.config["autoplay_next"].get(bool)
-        autoplay_start_enabled = self.config["autoplay_start"].get(bool)
+        autoplay_on_track_change_enabled = self.config["autoplay_on_track_change"].get(
+            bool
+        )
+        autoplay_at_launch_enabled = self.config["autoplay_at_launch"].get(bool)
+        autonext_at_track_end_enabled = self.config["autonext_at_track_end"].get(bool)
         autosave_on_quit_enabled = self.config["autosave_on_quit"].get(bool)
 
         if not categories_config:
@@ -61,8 +65,9 @@ class QuickTagPlugin(BeetsPlugin):
             lib,
             items,
             categories,
-            autoplay_next_enabled,
-            autoplay_start_enabled,
+            autoplay_on_track_change_enabled,
+            autoplay_at_launch_enabled,
+            autonext_at_track_end_enabled,
             autosave_on_quit_enabled,
         )
         app.run()

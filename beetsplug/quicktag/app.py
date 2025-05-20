@@ -96,8 +96,9 @@ class QuickTagApp(App):
         lib: BeetsLibrary,
         items: BeetsResults,
         categories: list[tuple[str, list[str]]],
-        autoplay_next_enabled: bool,
-        autoplay_start_enabled: bool,
+        autoplay_on_track_change_enabled: bool,
+        autoplay_at_launch_enabled: bool,
+        autonext_at_track_end_enabled: bool,
         autosave_on_quit_enabled: bool,
         **kwargs,
     ):
@@ -105,8 +106,9 @@ class QuickTagApp(App):
         self.lib = lib
         self.items = items
         self.categories = categories
-        self.autoplay_next_enabled = autoplay_next_enabled
-        self.autoplay_start_enabled = autoplay_start_enabled
+        self.autoplay_on_track_change_enabled = autoplay_on_track_change_enabled
+        self.autoplay_at_launch_enabled = autoplay_at_launch_enabled
+        self.autonext_at_track_end_enabled = autonext_at_track_end_enabled
         self.autosave_on_quit_enabled = autosave_on_quit_enabled
 
         self.current_item_index = 0
@@ -122,7 +124,7 @@ class QuickTagApp(App):
         """Called when the app is mounted."""
         self.theme = "gruvbox"
         await self._set_item(self.item, save_current_item_tags=False)
-        if not self.autoplay_start_enabled:
+        if not self.autoplay_at_launch_enabled:
             self.playback_widget.pause()
 
     async def on_unmount(self) -> None:
@@ -198,7 +200,10 @@ class QuickTagApp(App):
         # loading the current item also starts playback
         await self._load_current_item_for_playback()
 
-        if not self.playback_widget.is_playing and not self.autoplay_next_enabled:
+        if (
+            not self.playback_widget.is_playing
+            and not self.autoplay_on_track_change_enabled
+        ):
             self.playback_widget.pause()
             self.log.info("Playback paused after loading item.")
 
@@ -270,9 +275,9 @@ class QuickTagApp(App):
     async def on_playback_widget_track_ended(self, message: PlaybackEnded) -> None:
         """Handles the TrackEnded message from PlaybackWidget."""
         self.log.info(
-            f"PlaybackWidget.TrackEnded message received. Autoplay next: {self.autoplay_next_enabled}"
+            f"PlaybackWidget.TrackEnded message received. Autoplay next: {self.autoplay_on_track_change_enabled}"
         )
-        if self.autoplay_next_enabled:
+        if self.autonext_at_track_end_enabled:
             if self.current_item_index < len(self.items) - 1:
                 self.log.info("Autoplaying next item due to TrackEnded.")
                 await self.action_next_item()
