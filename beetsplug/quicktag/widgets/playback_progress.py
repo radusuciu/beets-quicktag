@@ -49,6 +49,7 @@ class PlaybackProgressWidget(Widget):
         self._progress_bar = ProgressBar(show_percentage=False, show_eta=False)
         self._time_remaining_display = Static("", id="time_remaining_text")
         self.player.observe_property("pause", self._on_mpv_pause)
+        self.player.observe_property("duration", self._update_progress_display)
         self.player.observe_property("eof-reached", self._on_mpv_eof)
 
     async def on_mount(self) -> None:
