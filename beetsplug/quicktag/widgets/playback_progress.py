@@ -1,6 +1,6 @@
 import math
 
-import mpv
+from just_playback import Playback
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.timer import Timer
@@ -42,15 +42,13 @@ class PlaybackProgressWidget(Widget):
     }
     """
 
-    def __init__(self, player: mpv.MPV):
+    def __init__(self, player: Playback):
         super().__init__()
         self.player = player
         self._playback_timer: Timer | None = None
         self._progress_bar = ProgressBar(show_percentage=False, show_eta=False)
         self._time_remaining_display = Static("", id="time_remaining_text")
-        self.player.observe_property("pause", self._on_mpv_pause)
-        self.player.observe_property("duration", self._update_progress_display)
-        self.player.observe_property("eof-reached", self._on_mpv_eof)
+        # Note: just_playback doesn't have property observation, so we'll use polling
 
     async def on_mount(self) -> None:
         self._playback_timer = self.set_interval(1 / 2, self._update_progress_display)
@@ -62,30 +60,17 @@ class PlaybackProgressWidget(Widget):
             yield self._progress_bar
             yield self._time_remaining_display
 
-    def _on_mpv_pause(self, name: str, paused: bool) -> None:
-        self._playback_timer.pause() if paused else self._playback_timer and self._playback_timer.resume()
-
-    def _on_mpv_eof(self, name: str, eof_reached: bool) -> None:
-        if self.player and eof_reached:
-            self.log.info(
-                f"MPV: End of file - {self.player.filename or 'Unknown file'}"
-            )
-            self._progress_bar.progress = (
-                self._progress_bar.total if self._progress_bar.total else 100
-            )
-            self._time_remaining_display.update("00:00")
-            self._playback_timer.pause()
-
     def _update_progress_display(self, *args, **kwargs) -> None:
         if (
             self.player
-            and self.player.path
+            and hasattr(self.player, 'duration')
+            and hasattr(self.player, 'curr_pos')
             and self.player.duration is not None
             and self.player.duration > 0
         ):
             duration = self.player.duration
-            time_pos = self.player.time_pos if self.player.time_pos is not None else 0
-            time_remaining_seconds = self.player.time_remaining
+            time_pos = self.player.curr_pos if self.player.curr_pos is not None else 0
+            time_remaining_seconds = duration - time_pos if time_pos is not None else None
 
             self._progress_bar.total = duration
             self._progress_bar.progress = time_pos
@@ -95,6 +80,17 @@ class PlaybackProgressWidget(Widget):
                 f"-{format_seconds_to_time_str(time_remaining_seconds)}"
             )
             self._time_remaining_display.visible = True
+
+            # Check if playback has ended
+            if (
+                not self.player.active
+                and time_pos is not None
+                and time_pos >= (duration - 0.5)
+            ):
+                self._progress_bar.progress = self._progress_bar.total
+                self._time_remaining_display.update("00:00")
+                if self._playback_timer:
+                    self._playback_timer.pause()
         else:
             if self._progress_bar.visible or self._time_remaining_display.visible:
                 self._progress_bar.progress = 0

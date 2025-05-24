@@ -18,6 +18,7 @@ class QuickTagPlugin(BeetsPlugin):
                 "autoplay_at_launch": False,
                 "autonext_at_track_end": False,
                 "autosave_on_quit": False,
+                "keep_playing_on_track_change_if_playing": True,
             }
         )
 
@@ -45,6 +46,7 @@ class QuickTagPlugin(BeetsPlugin):
         autoplay_at_launch_enabled = self.config["autoplay_at_launch"].get(bool)
         autonext_at_track_end_enabled = self.config["autonext_at_track_end"].get(bool)
         autosave_on_quit_enabled = self.config["autosave_on_quit"].get(bool)
+        keep_playing_on_track_change_if_playing_enabled = self.config["keep_playing_on_track_change_if_playing"].get(bool)
 
         if not categories_config:
             ui.print_(
@@ -69,5 +71,6 @@ class QuickTagPlugin(BeetsPlugin):
             autoplay_at_launch_enabled,
             autonext_at_track_end_enabled,
             autosave_on_quit_enabled,
+            keep_playing_on_track_change_if_playing_enabled,
         )
         app.run()

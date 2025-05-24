@@ -100,6 +100,7 @@ class QuickTagApp(App):
         autoplay_at_launch_enabled: bool,
         autonext_at_track_end_enabled: bool,
         autosave_on_quit_enabled: bool,
+        keep_playing_on_track_change_if_playing_enabled: bool,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -110,6 +111,7 @@ class QuickTagApp(App):
         self.autoplay_at_launch_enabled = autoplay_at_launch_enabled
         self.autonext_at_track_end_enabled = autonext_at_track_end_enabled
         self.autosave_on_quit_enabled = autosave_on_quit_enabled
+        self.keep_playing_on_track_change_if_playing_enabled = keep_playing_on_track_change_if_playing_enabled
 
         self.current_item_index = 0
         self.item = items[0] if items else None
@@ -178,6 +180,9 @@ class QuickTagApp(App):
 
     async def _set_item(self, item: BeetsItem, save_current_item_tags=True) -> None:
         """Handle changes to the current item."""
+        # Capture the current playback state before changing items
+        was_playing_before = self.playback_widget.is_playing()
+        
         if save_current_item_tags:
             await self._save_current_item_tags()
         self.item = item
@@ -194,18 +199,30 @@ class QuickTagApp(App):
             except NoMatches:
                 pass
 
-        # we should stop and play?
-        # the progress bar doesn't update because I think we're not calling play
-
-        # loading the current item also starts playback
+        # Load the new track (this doesn't start playback automatically)
         await self._load_current_item_for_playback()
 
-        if (
-            not self.playback_widget.is_playing
-            and not self.autoplay_on_track_change_enabled
-        ):
-            self.playback_widget.pause()
-            self.log.info("Playback paused after loading item.")
+        # Determine whether to start playing the new track
+        should_play = False
+        
+        if was_playing_before and self.keep_playing_on_track_change_if_playing_enabled:
+            # If we were playing before and the setting allows it, continue playing the new track
+            should_play = True
+            self.log.info("Continuing playback with new track (was playing before and keep_playing_on_track_change_if_playing enabled)")
+        elif self.autoplay_on_track_change_enabled:
+            # If autoplay is enabled, start playing regardless of previous state
+            should_play = True
+            self.log.info("Starting playback due to autoplay_on_track_change setting")
+        else:
+            # We were paused or keep_playing_on_track_change_if_playing is disabled, stay paused
+            self.log.info("Keeping playback paused (was paused, autoplay disabled, or keep_playing_on_track_change_if_playing disabled)")
+
+        if should_play:
+            self.playback_widget.play()
+        else:
+            # Ensure we're paused if we shouldn't be playing
+            if self.playback_widget.is_playing():
+                self.playback_widget.pause()
 
     async def _navigate(self, direction: NavigateDirection) -> None:
         """Navigates through the items list in the specified direction."""
