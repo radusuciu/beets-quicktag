@@ -81,6 +81,7 @@ class PlaybackWidget(Widget):
         if self._was_playing and not self.player.active:
             self._was_playing = False
             self.log.info(f"just_playback: End of file - {self._current_path}")
+            self._playback_progress.mark_ended()
             self.post_message(PlaybackEnded(self._playback_generation))
         else:
             self._was_playing = bool(self.player.playing)
@@ -125,6 +126,7 @@ class PlaybackWidget(Widget):
                 return
             self._current_path = new_path
             self._playback_generation += 1
+            self._playback_progress.clear_ended()
             self.log.info(f"just_playback: Loaded track {new_path}")
         else:
             self.log.info(f"just_playback: Track {new_path} already loaded.")
@@ -188,6 +190,7 @@ class PlaybackWidget(Widget):
             # Arm end-of-track detection now, so a track shorter than the poll
             # interval is still noticed by _check_eof.
             self._was_playing = True
+            self._playback_progress.clear_ended()
         except Exception as e:
             self.log.error(
                 f"just_playback: Error during play for {self._current_path}: {e}"
