@@ -239,12 +239,16 @@ class QuickTagApp(App):
             if self.playback_widget.is_playing():
                 self.playback_widget.pause()
 
-    async def _navigate(self, direction: NavigateDirection) -> None:
-        """Navigates through the items list in the specified direction."""
+    async def _navigate(self, direction: NavigateDirection) -> bool:
+        """Navigates through the items list in the specified direction.
+
+        Returns True if the current item changed, False if we were already at
+        the end the caller asked to move past.
+        """
         # TODO: Do we need this?
         # TODO: should be exception?
         if not self.item:
-            return
+            return False
 
         # TODO: do we stop here or elsewhere?
         # self.playback_widget.stop()
@@ -254,16 +258,19 @@ class QuickTagApp(App):
             if self.current_item_index < len(self.items) - 1:
                 self.current_item_index += 1
             else:
+                # There is nowhere to move to, but the last item's tags would
+                # otherwise never be saved (only moving off an item saves it).
+                await self._save_current_item_tags()
                 self.header_widget._header_text_display.update(
                     "All items processed. Press Esc to quit."
                 )
-                return
+                return False
         elif direction == NavigateDirection.BACKWARD:
             if self.current_item_index > 0:
                 self.current_item_index -= 1
             else:
                 # We don't want to loop back to the last item
-                return
+                return False
         else:
             # this should never happen...
             error_message = (
@@ -275,6 +282,7 @@ class QuickTagApp(App):
             raise ValueError(error_message)
 
         await self._set_item(self.items[self.current_item_index])
+        return True
 
     async def action_next_item(self) -> None:
         """Saves tags for the current item and moves to the next item."""
