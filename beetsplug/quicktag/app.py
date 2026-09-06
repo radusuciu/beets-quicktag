@@ -73,8 +73,10 @@ class HeaderWidget(Vertical):
 class QuickTagApp(App):
     BINDINGS = [
         Binding("escape", "quit", "Quit", show=True, priority=True),
-        Binding("left", "previous_item", "Previous", show=True, priority=True),
-        Binding("right", "next_item", "Next", show=True, priority=True),
+        # No priority: the focused widget wins first, so Left/Right move the
+        # cursor inside the comments input instead of changing track.
+        Binding("left", "previous_item", "Previous", show=True),
+        Binding("right", "next_item", "Next", show=True),
         ("/", "play_pause_current_item", "Play/Pause"),
         ("<", "seek_backward(5)", "Seek -5s"),
         (">", "seek_forward(5)", "Seek +5s"),
