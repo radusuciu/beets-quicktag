@@ -139,6 +139,32 @@ class TestPlaybackGeneration:
         assert widget.playback_generation == start
 
 
+class TestProgressDisplayIsToldAboutEof:
+    """Bug 13: the widget tells the progress display; the display never polls."""
+
+    def test_eof_marks_the_progress_display_as_ended(self, widget: PlaybackWidget):
+        widget.player.active = True
+        widget.player.playing = True
+        with patch.object(widget._playback_progress, "mark_ended") as mark_ended:
+            widget._check_eof()  # observes playing
+            mark_ended.assert_not_called()
+
+            widget.player.active = False
+            widget.player.playing = False
+            widget._check_eof()
+            mark_ended.assert_called_once()
+
+    def test_load_and_play_clear_the_ended_marker(
+        self, widget: PlaybackWidget, mp3_files: dict[str, Path]
+    ):
+        with patch.object(widget._playback_progress, "clear_ended") as clear_ended:
+            widget.load_track(str(mp3_files["short"]))
+            assert clear_ended.call_count == 1
+
+            widget.play()
+            assert clear_ended.call_count == 2
+
+
 class _WidgetApp(App):
     def __init__(self, widget: PlaybackWidget) -> None:
         super().__init__()
