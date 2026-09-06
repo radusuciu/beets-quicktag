@@ -10,9 +10,17 @@ from .playback_progress import PlaybackProgressWidget
 
 
 class PlaybackEnded(Message):
-    """Posted when playback finishes (EOF)."""
+    """Posted when playback finishes (EOF).
 
-    pass
+    `generation` identifies the playback that ended. EOF is only noticed on the
+    next poll, so by the time the app handles this message the user may already
+    have changed track or restarted the current one; comparing generations lets
+    the handler drop such stale messages.
+    """
+
+    def __init__(self, generation: int) -> None:
+        super().__init__()
+        self.generation = generation
 
 
 class PlaybackWidget(Widget):
@@ -32,6 +40,10 @@ class PlaybackWidget(Widget):
         # transition: we were playing, and now the player is inactive without
         # us having stopped, paused, or reloaded it.
         self._was_playing: bool = False
+        # Bumped on every successful load and every start/resume, so a
+        # PlaybackEnded posted for an earlier playback can be recognised as
+        # stale. See PlaybackEnded.
+        self._playback_generation: int = 0
 
         self.player: Playback | None
         try:
@@ -44,6 +56,11 @@ class PlaybackWidget(Widget):
         # Built unconditionally: compose() yields it even when there is no
         # player, and the progress widget tolerates player=None.
         self._playback_progress = PlaybackProgressWidget(player=self.player)
+
+    @property
+    def playback_generation(self) -> int:
+        """Identifier of the current playback, for stale-message detection."""
+        return self._playback_generation
 
     async def on_mount(self) -> None:
         # Start a timer to check for end-of-file conditions since
@@ -64,7 +81,7 @@ class PlaybackWidget(Widget):
         if self._was_playing and not self.player.active:
             self._was_playing = False
             self.log.info(f"just_playback: End of file - {self._current_path}")
-            self.post_message(PlaybackEnded())
+            self.post_message(PlaybackEnded(self._playback_generation))
         else:
             self._was_playing = bool(self.player.playing)
 
@@ -107,6 +124,7 @@ class PlaybackWidget(Widget):
                 self._handle_load_failure(new_path, e)
                 return
             self._current_path = new_path
+            self._playback_generation += 1
             self.log.info(f"just_playback: Loaded track {new_path}")
         else:
             self.log.info(f"just_playback: Track {new_path} already loaded.")
@@ -150,12 +168,14 @@ class PlaybackWidget(Widget):
         try:
             if self.player.paused:
                 self.player.resume()
+                self._playback_generation += 1
                 self.log.info(
                     f"just_playback: Resumed play for {self._current_path} "
                     "via play() method."
                 )
             elif not self.player.playing:
                 self.player.play()
+                self._playback_generation += 1
                 self.log.info(
                     f"just_playback: Started play for {self._current_path} "
                     "via play() method."
