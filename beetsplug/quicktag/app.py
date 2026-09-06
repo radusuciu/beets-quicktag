@@ -327,12 +327,15 @@ class QuickTagApp(App):
             # play again restarts it.
             return
 
-        if self.current_item_index >= len(self.items) - 1:
+        self.log.info("Advancing to next item because the track ended.")
+        moved = await self._navigate(NavigateDirection.FORWARD)
+
+        if not moved:
+            # _navigate saved the last item and showed the completion message;
+            # replaying here would loop the track that just ended.
             self.log.info("Track ended, but already at the last item.")
             return
 
-        self.log.info("Advancing to next item because the track ended.")
-        await self._navigate(NavigateDirection.FORWARD)
         # The track that just ended no longer counts as "playing", so _set_item
         # would leave the new one paused; auto-advance means keep listening.
         self.playback_widget.play()

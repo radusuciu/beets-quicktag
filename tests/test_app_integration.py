@@ -499,7 +499,9 @@ class TestQuickTagAppPlaybackEndedHandling:
         app.current_item_index = 0
 
         with (
-            patch.object(app, "_navigate", new_callable=AsyncMock) as mock_navigate,
+            patch.object(
+                app, "_navigate", new_callable=AsyncMock, return_value=True
+            ) as mock_navigate,
             patch.object(app.playback_widget, "play") as mock_play,
         ):
             await app.on_playback_ended(PlaybackEnded())
@@ -560,13 +562,48 @@ class TestQuickTagAppPlaybackEndedHandling:
         app.current_item_index = len(items) - 1
 
         with (
-            patch.object(app, "_navigate", new_callable=AsyncMock) as mock_navigate,
+            patch.object(
+                app, "_navigate", new_callable=AsyncMock, return_value=False
+            ) as mock_navigate,
             patch.object(app.playback_widget, "play") as mock_play,
         ):
             await app.on_playback_ended(PlaybackEnded())
 
-            # Nothing to advance to; stay on the last item, stopped
-            mock_navigate.assert_not_called()
+            # _navigate handles the end of the list (saving and reporting);
+            # nothing to advance to, so playback must not restart
+            mock_navigate.assert_called_once_with(NavigateDirection.FORWARD)
+            mock_play.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_playback_ended_at_last_item_shows_completion(
+        self, temp_beets_library: Library
+    ):
+        """Auto-advancing past the last item must report that we are done."""
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=True,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test():
+            app.current_item_index = len(items) - 1
+            app.item = items[-1]
+
+            with patch.object(app.playback_widget, "play") as mock_play:
+                await app.on_playback_ended(PlaybackEnded())
+
+            assert app.current_item_index == len(items) - 1
+            assert "All items processed" in header_text(app)
+            # The last track must not restart in a loop
             mock_play.assert_not_called()
 
 
