@@ -85,6 +85,40 @@ class TestQuickTagAppPlaybackConfiguration:
             mock_play.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_autoplay_at_launch_disabled_overrides_track_change_autoplay(
+        self, temp_beets_library: Library, mock_config: dict[str, Any]
+    ):
+        """Test autoplay_at_launch=False wins at mount even when
+        autoplay_on_track_change=True (bug 5): the launch decision belongs
+        solely to on_mount, not to the autoplay-on-track-change branch of
+        _set_item."""
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        config = mock_config.copy()
+        config["autoplay_at_launch"] = False
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=list(config["categories"].items()),
+            autoplay_at_launch_enabled=config["autoplay_at_launch"],
+            autoplay_on_track_change_enabled=True,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        with patch.object(app.playback_widget, "play") as mock_play:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+
+            # Mounting must not start playback: autoplay_at_launch is False
+            # even though autoplay_on_track_change is True.
+            mock_play.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_autoplay_on_track_change_combinations(
         self, temp_beets_library: Library, autoplay_configs: dict[str, dict[str, bool]]
     ):
