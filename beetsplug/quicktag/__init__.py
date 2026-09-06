@@ -6,6 +6,7 @@ from beets.library import Library as BeetsLibrary
 from beets.plugins import BeetsPlugin
 
 from .app import QuickTagApp
+from .config import validate_categories
 
 
 class QuickTagPlugin(BeetsPlugin):
@@ -62,9 +63,13 @@ class QuickTagPlugin(BeetsPlugin):
             ui.print_(
                 "    genre_custom: [electronic, ambient, experimental, soundtrack]"
             )
+            ui.print_(
+                "  (category names must contain only letters, digits, "
+                "underscores and hyphens, and not start with a digit)"
+            )
             return
 
-        categories = list(categories_config.items())
+        categories = validate_categories(categories_config)
 
         app = QuickTagApp(
             lib,
