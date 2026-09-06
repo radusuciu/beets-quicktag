@@ -31,15 +31,17 @@ class PlaybackWidget(Widget):
         # us having stopped, paused, or reloaded it.
         self._was_playing: bool = False
 
+        self.player: Playback | None
         try:
             self.player = Playback()
-            self._playback_progress = PlaybackProgressWidget(player=self.player)
-            # self.log.info("just_playback Player initialized in PlaybackWidget")
         except Exception:
-            # self.log.error(
-            #     f"Failed to initialize just_playback player in PlaybackWidget: {e}"
-            # )
+            # No audio device (or a broken backend): keep the widget usable so
+            # the rest of the UI still works, just without sound.
             self.player = None
+
+        # Built unconditionally: compose() yields it even when there is no
+        # player, and the progress widget tolerates player=None.
+        self._playback_progress = PlaybackProgressWidget(player=self.player)
 
     async def on_mount(self) -> None:
         # Start a timer to check for end-of-file conditions since
@@ -51,9 +53,6 @@ class PlaybackWidget(Widget):
 
     def compose(self) -> ComposeResult:
         yield self._playback_progress
-
-    def render(self):
-        return "hi"
 
     def _check_eof(self) -> None:
         """Post PlaybackEnded once when playback stops on its own."""
