@@ -42,7 +42,7 @@ class PlaybackProgressWidget(Widget):
     }
     """
 
-    def __init__(self, player: Playback):
+    def __init__(self, player: Playback | None):
         super().__init__()
         self.player = player
         self._playback_timer: Timer | None = None
