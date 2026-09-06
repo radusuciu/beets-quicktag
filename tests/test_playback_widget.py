@@ -261,32 +261,38 @@ class TestPlaybackWidgetEOFDetection:
     """Test end-of-file detection logic."""
 
     def test_eof_check_conditions(self, playback_widget):
-        """Test EOF detection conditions."""
+        """EOF is the transition from playing to inactive (curr_pos is 0 then)."""
         widget = playback_widget
 
-        # Mock player state for EOF detection
         mock_player = Mock()
         mock_player.duration = 5.0
-        mock_player.curr_pos = 4.6  # Near end
-        mock_player.active = False
+        mock_player.curr_pos = 2.0
+        mock_player.active = True
+        mock_player.playing = True
         widget.player = mock_player
         widget._current_path = "test.mp3"
 
         with patch.object(widget, "post_message") as mock_post:
+            widget._check_eof()  # observes playing
+            mock_post.assert_not_called()
+
+            mock_player.active = False
+            mock_player.playing = False
+            mock_player.curr_pos = 0.0
             widget._check_eof()
             mock_post.assert_called_once()
             args, kwargs = mock_post.call_args
             assert isinstance(args[0], PlaybackEnded)
 
     def test_eof_check_not_at_end(self, playback_widget):
-        """Test EOF detection when not at end of track."""
+        """An inactive player that was never observed playing is not EOF."""
         widget = playback_widget
 
-        # Mock player state - not at end
         mock_player = Mock()
         mock_player.duration = 5.0
-        mock_player.curr_pos = 2.0  # Middle of track
+        mock_player.curr_pos = 0.0
         mock_player.active = False
+        mock_player.playing = False
         widget.player = mock_player
         widget._current_path = "test.mp3"
 
@@ -326,36 +332,40 @@ class TestPlaybackWidgetEOFDetection:
             widget._check_eof()
             mock_post.assert_not_called()
 
-    def test_eof_check_tolerance(self, playback_widget):
-        """Test EOF detection tolerance (0.5 seconds)."""
+    def test_eof_check_posts_only_once(self, playback_widget):
+        """Repeated polls after the end must not post again."""
         widget = playback_widget
 
-        # Mock player state - exactly at tolerance boundary
         mock_player = Mock()
-        mock_player.duration = 5.0
-        mock_player.curr_pos = 4.5  # Exactly 0.5s before end
-        mock_player.active = False
+        mock_player.active = True
+        mock_player.playing = True
         widget.player = mock_player
         widget._current_path = "test.mp3"
 
         with patch.object(widget, "post_message") as mock_post:
             widget._check_eof()
-            mock_post.assert_called_once()  # Should trigger EOF
+            mock_player.active = False
+            mock_player.playing = False
+            widget._check_eof()
+            widget._check_eof()
+            widget._check_eof()
+            mock_post.assert_called_once()
 
     def test_eof_check_very_short_file(self, playback_widget):
-        """Test EOF detection with very short file."""
+        """A file that ends before the first poll is still detected: play() arms it."""
         widget = playback_widget
 
-        # Mock player state - very short file
         mock_player = Mock()
-        mock_player.duration = 0.3  # Shorter than tolerance
-        mock_player.curr_pos = 0.3
+        mock_player.duration = 0.3
+        mock_player.paused = False
+        mock_player.playing = False
         mock_player.active = False
         widget.player = mock_player
         widget._current_path = "test.mp3"
 
         with patch.object(widget, "post_message") as mock_post:
-            widget._check_eof()
+            widget.play()
+            widget._check_eof()  # player already inactive again
             mock_post.assert_called_once()
 
 

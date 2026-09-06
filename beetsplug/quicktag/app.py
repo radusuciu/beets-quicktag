@@ -127,8 +127,8 @@ class QuickTagApp(App):
         """Called when the app is mounted."""
         self.theme = "gruvbox"
         await self._set_item(self.item, save_current_item_tags=False)
-        if not self.autoplay_at_launch_enabled:
-            self.playback_widget.pause()
+        if self.autoplay_at_launch_enabled:
+            self.playback_widget.play()
 
     async def on_unmount(self) -> None:
         """Called when the app is unmounted."""
@@ -294,20 +294,25 @@ class QuickTagApp(App):
         if self.item:
             self.playback_widget.seek_relative(-seconds)
 
-    async def on_playback_widget_track_ended(self, message: PlaybackEnded) -> None:
-        """Handles the TrackEnded message from PlaybackWidget."""
+    async def on_playback_ended(self, message: PlaybackEnded) -> None:
+        """Handles the PlaybackEnded message from PlaybackWidget."""
         self.log.info(
-            f"PlaybackWidget.TrackEnded message received. Autoplay next: {self.autoplay_on_track_change_enabled}"
+            f"PlaybackEnded received. autonext_at_track_end: {self.autonext_at_track_end_enabled}"
         )
-        if self.autonext_at_track_end_enabled:
-            if self.current_item_index < len(self.items) - 1:
-                self.log.info("Autoplaying next item due to TrackEnded.")
-                await self.action_next_item()
-            else:
-                self.log.info("Track ended, but already at the last item.")
-        else:
-            self.playback_widget.pause()
-            self.playback_widget.seek(0)
+        if not self.autonext_at_track_end_enabled:
+            # The player is already stopped at the start of the track; pressing
+            # play again restarts it.
+            return
+
+        if self.current_item_index >= len(self.items) - 1:
+            self.log.info("Track ended, but already at the last item.")
+            return
+
+        self.log.info("Advancing to next item because the track ended.")
+        await self._navigate(NavigateDirection.FORWARD)
+        # The track that just ended no longer counts as "playing", so _set_item
+        # would leave the new one paused; auto-advance means keep listening.
+        self.playback_widget.play()
 
     async def _save_current_item_tags(self) -> None:
         """Saves the tags for the current item based on selections."""

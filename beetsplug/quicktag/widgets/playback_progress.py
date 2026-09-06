@@ -82,17 +82,6 @@ class PlaybackProgressWidget(Widget):
                 f"-{format_seconds_to_time_str(time_remaining_seconds)}"
             )
             self._time_remaining_display.visible = True
-
-            # Check if playback has ended
-            if (
-                not self.player.active
-                and time_pos is not None
-                and time_pos >= (duration - 0.5)
-            ):
-                self._progress_bar.progress = self._progress_bar.total
-                self._time_remaining_display.update("00:00")
-                if self._playback_timer:
-                    self._playback_timer.pause()
         else:
             if self._progress_bar.visible or self._time_remaining_display.visible:
                 self._progress_bar.progress = 0

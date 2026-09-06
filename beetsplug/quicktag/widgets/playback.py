@@ -25,6 +25,11 @@ class PlaybackWidget(Widget):
         super().__init__(**kwargs)
         self._current_path: str | None = None
         self._eof_check_timer: Timer | None = None
+        # just_playback reports active=False and curr_pos=0 once a track has
+        # played to completion, so end-of-track has to be detected as a
+        # transition: we were playing, and now the player is inactive without
+        # us having stopped, paused, or reloaded it.
+        self._was_playing: bool = False
 
         try:
             self.player = Playback()
@@ -48,23 +53,16 @@ class PlaybackWidget(Widget):
         return "hi"
 
     def _check_eof(self) -> None:
-        """Check if playback has reached end of file and post PlaybackEnded message if so."""
-        if (
-            self.player
-            and self._current_path
-            and hasattr(self.player, "duration")
-            and hasattr(self.player, "curr_pos")
-            and self.player.duration
-            and self.player.curr_pos is not None
-        ):
-            # Check if we've reached the end (within 0.5 seconds tolerance)
-            if not self.player.active and self.player.curr_pos >= (
-                self.player.duration - 0.5
-            ):
-                self.log.info(
-                    f"just_playback: End of file - {self._current_path or 'Unknown file'}"
-                )
-                self.post_message(PlaybackEnded())
+        """Post PlaybackEnded once when playback stops on its own."""
+        if not self.player or not self._current_path:
+            return
+
+        if self._was_playing and not self.player.active:
+            self._was_playing = False
+            self.log.info(f"just_playback: End of file - {self._current_path}")
+            self.post_message(PlaybackEnded())
+        else:
+            self._was_playing = bool(self.player.playing)
 
     async def _terminate_player(self) -> None:
         if self._eof_check_timer:
@@ -93,6 +91,7 @@ class PlaybackWidget(Widget):
             return
 
         if self._current_path != new_path:
+            self._was_playing = False
             try:
                 self.player.load_file(new_path)
                 self._current_path = new_path
@@ -127,6 +126,9 @@ class PlaybackWidget(Widget):
                 self.log.info(
                     f"just_playback: Already playing {self._current_path}. play() called."
                 )
+            # Arm end-of-track detection now, so a track shorter than the poll
+            # interval is still noticed by _check_eof.
+            self._was_playing = True
         except Exception as e:
             self.log.error(
                 f"just_playback: Error during play for {self._current_path}: {e}"
@@ -172,6 +174,7 @@ class PlaybackWidget(Widget):
             )
             self.player.stop()
 
+        self._was_playing = False
         self._current_path = None
 
     def seek_relative(self, seconds: int) -> None:
@@ -184,7 +187,13 @@ class PlaybackWidget(Widget):
                 new_position = max(
                     0, min(self.player.curr_pos + seconds, self.player.duration)
                 )
-                self.player.seek(new_position)
+                try:
+                    self.player.seek(new_position)
+                except Exception as e:
+                    self.log.error(
+                        f"just_playback: Error seeking to {new_position} in "
+                        f"{self._current_path}: {e}"
+                    )
 
     def is_playing(self) -> bool:
         return bool(self.player and self.player.playing)

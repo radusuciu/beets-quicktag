@@ -152,10 +152,11 @@ class TestPlaybackProgressWidget:
         widget._time_remaining_display.update.assert_called_once_with("-00:30")
 
     def test_update_progress_display_end_of_track(self):
-        """Test progress display at end of track."""
+        """After a track ends the display keeps following the player and the
+        update timer keeps running, so the next track's progress still shows."""
         mock_player = Mock(spec=Playback)
         mock_player.duration = 30.0
-        mock_player.curr_pos = 29.6  # Within 0.5s of end
+        mock_player.curr_pos = 0.0  # just_playback resets position at end
         mock_player.active = False
 
         widget = PlaybackProgressWidget(mock_player)
@@ -165,14 +166,10 @@ class TestPlaybackProgressWidget:
 
         widget._update_progress_display()
 
-        # Should set progress bar values
         assert widget._progress_bar.total == 30.0
-        # At end of track, progress should be set to total (line 90 in implementation)
-        assert widget._progress_bar.progress == 30.0  # Set to total at end
-        widget._time_remaining_display.update.assert_called_with(
-            "00:00"
-        )  # Shows 00:00 at end
-        widget._playback_timer.pause.assert_called_once()
+        assert widget._progress_bar.progress == 0.0
+        widget._time_remaining_display.update.assert_called_with("-00:30")
+        widget._playback_timer.pause.assert_not_called()
 
     def test_update_progress_display_player_still_active_at_end(self):
         """Test progress display when near end but player still active."""
@@ -305,10 +302,10 @@ class TestPlaybackProgressWidgetEdgeCases:
         widget._playback_timer = None
         widget._update_progress_display()  # Should not crash
 
-        # Test with timer
+        # Test with timer: the update loop is never paused by the display code
         widget._playback_timer = Mock()
         widget._update_progress_display()
-        widget._playback_timer.pause.assert_called_once()
+        widget._playback_timer.pause.assert_not_called()
 
     def test_visibility_state_changes(self):
         """Test progress bar visibility state changes."""

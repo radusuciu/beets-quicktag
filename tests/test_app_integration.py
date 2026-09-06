@@ -47,11 +47,12 @@ class TestQuickTagAppPlaybackConfiguration:
             keep_playing_on_track_change_if_playing_enabled=False,
         )
 
-        with patch.object(app.playback_widget, "pause") as mock_pause:
-            await app.on_mount()
+        with patch.object(app.playback_widget, "play") as mock_play:
+            async with app.run_test() as pilot:
+                await pilot.pause()
 
-            # Should not call pause when autoplay is enabled
-            mock_pause.assert_not_called()
+            # Mounting the app must start playback when autoplay is enabled
+            mock_play.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_autoplay_at_launch_disabled(
@@ -76,11 +77,12 @@ class TestQuickTagAppPlaybackConfiguration:
             keep_playing_on_track_change_if_playing_enabled=False,
         )
 
-        with patch.object(app.playback_widget, "pause") as mock_pause:
-            await app.on_mount()
+        with patch.object(app.playback_widget, "play") as mock_play:
+            async with app.run_test() as pilot:
+                await pilot.pause()
 
-            # Should call pause when autoplay is disabled
-            mock_pause.assert_called_once()
+            # Mounting the app must not start playback when autoplay is disabled
+            mock_play.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_autoplay_on_track_change_combinations(
@@ -121,8 +123,12 @@ class TestQuickTagAppPlaybackConfiguration:
                                     "is_playing",
                                     return_value=False,
                                 ):
-                                    # Navigate to next item
-                                    await app._set_item(items[1])
+                                    async with app.run_test():
+                                        # on_mount already called _set_item once
+                                        mock_play.reset_mock()
+                                        mock_pause.reset_mock()
+                                        # Navigate to next item
+                                        await app._set_item(items[1])
 
                                     if config["autoplay_on_track_change"]:
                                         mock_play.assert_called()
@@ -162,8 +168,11 @@ class TestQuickTagAppPlaybackConfiguration:
                         with patch.object(
                             app.playback_widget, "is_playing", return_value=True
                         ):
-                            # Navigate to next item while playing
-                            await app._set_item(items[1])
+                            async with app.run_test():
+                                # on_mount already called _set_item once
+                                mock_play.reset_mock()
+                                # Navigate to next item while playing
+                                await app._set_item(items[1])
 
                             # Should continue playing the new track
                             mock_play.assert_called_once()
@@ -199,10 +208,11 @@ class TestQuickTagAppPlaybackConfiguration:
                         with patch.object(
                             app.playback_widget,
                             "is_playing",
-                            side_effect=[False, False],
+                            return_value=False,
                         ):
-                            # Navigate to next item while paused
-                            await app._set_item(items[1])
+                            async with app.run_test():
+                                # Navigate to next item while paused
+                                await app._set_item(items[1])
 
                             # Should not start playing (was paused)
                             mock_play.assert_not_called()
@@ -439,11 +449,15 @@ class TestQuickTagAppPlaybackEndedHandling:
         # Start at first item
         app.current_item_index = 0
 
-        with patch.object(app, "action_next_item", new_callable=AsyncMock) as mock_next:
-            message = PlaybackEnded()
-            await app.on_playback_widget_track_ended(message)
+        with (
+            patch.object(app, "_navigate", new_callable=AsyncMock) as mock_navigate,
+            patch.object(app.playback_widget, "play") as mock_play,
+        ):
+            await app.on_playback_ended(PlaybackEnded())
 
-            mock_next.assert_called_once()
+            mock_navigate.assert_called_once_with(NavigateDirection.FORWARD)
+            # Auto-advance keeps listening, regardless of autoplay_on_track_change
+            mock_play.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_playback_ended_with_autonext_disabled(
@@ -465,13 +479,15 @@ class TestQuickTagAppPlaybackEndedHandling:
             keep_playing_on_track_change_if_playing_enabled=False,
         )
 
-        with patch.object(app.playback_widget, "pause") as mock_pause:
-            with patch.object(app.playback_widget, "seek") as mock_seek:
-                message = PlaybackEnded()
-                await app.on_playback_widget_track_ended(message)
+        with (
+            patch.object(app, "_navigate", new_callable=AsyncMock) as mock_navigate,
+            patch.object(app.playback_widget, "play") as mock_play,
+        ):
+            await app.on_playback_ended(PlaybackEnded())
 
-                mock_pause.assert_called_once()
-                mock_seek.assert_called_once_with(0)  # Reset to beginning
+            # The player is already stopped at the start of the track; nothing to do
+            mock_navigate.assert_not_called()
+            mock_play.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_playback_ended_at_last_item(self, temp_beets_library: Library):
@@ -494,12 +510,15 @@ class TestQuickTagAppPlaybackEndedHandling:
         # Set to last item
         app.current_item_index = len(items) - 1
 
-        with patch.object(app, "action_next_item", new_callable=AsyncMock) as mock_next:
-            message = PlaybackEnded()
-            await app.on_playback_widget_track_ended(message)
+        with (
+            patch.object(app, "_navigate", new_callable=AsyncMock) as mock_navigate,
+            patch.object(app.playback_widget, "play") as mock_play,
+        ):
+            await app.on_playback_ended(PlaybackEnded())
 
-            # Should still call action_next_item, which will handle being at the end
-            mock_next.assert_called_once()
+            # Nothing to advance to; stay on the last item, stopped
+            mock_navigate.assert_not_called()
+            mock_play.assert_not_called()
 
 
 class TestQuickTagAppErrorHandling:
@@ -527,14 +546,16 @@ class TestQuickTagAppErrorHandling:
 
         # Mock item with problematic path
         mock_item = Mock()
-        mock_item.path = b"test_path"
+        mock_item.path = Mock()
         mock_item.path.decode.side_effect = UnicodeDecodeError(
             "utf-8", b"", 0, 1, "test error"
         )
-        app.item = mock_item
 
         with patch.object(app.playback_widget, "load_track") as mock_load_track:
-            await app._load_current_item_for_playback()
+            async with app.run_test():
+                mock_load_track.reset_mock()  # on_mount loaded the real item
+                app.item = mock_item
+                await app._load_current_item_for_playback()
 
             # Should not call load_track if path decoding fails
             mock_load_track.assert_not_called()
@@ -621,22 +642,25 @@ class TestQuickTagAppRealPlaybackIntegration:
         if app.playback_widget.player is None:
             pytest.skip("just_playback not available")
 
-        # Mock the item path to point to our test file
-        app.item.path = str(mp3_files["short"])
+        async with app.run_test():
+            # Mock the item path to point to our test file
+            app.item.path = str(mp3_files["short"])
 
-        # Load and play
-        await app._load_current_item_for_playback()
-        await app.action_play_pause_current_item()
+            # Load and play
+            await app._load_current_item_for_playback()
+            await app.action_play_pause_current_item()
 
-        # Give some time for playback to start
-        await asyncio.sleep(0.1)
+            # Give some time for playback to start
+            await asyncio.sleep(0.1)
+            assert app.playback_widget.is_playing()
 
-        # Test seek operations
-        await app.action_seek_forward(2)
-        await app.action_seek_backward(1)
+            # Test seek operations
+            await app.action_seek_forward(2)
+            await app.action_seek_backward(1)
 
-        # Stop playback
-        app.playback_widget.stop()
+            # Stop playback
+            app.playback_widget.stop()
+            assert not app.playback_widget.is_playing()
 
     @pytest.mark.asyncio
     async def test_rapid_track_changes(self, temp_beets_library: Library):
@@ -664,11 +688,12 @@ class TestQuickTagAppRealPlaybackIntegration:
                 with patch.object(
                     app, "_load_current_item_for_playback", new_callable=AsyncMock
                 ):
-                    # Rapid navigation
-                    for i in range(min(5, len(items))):
-                        await app.action_next_item()
-                        # Small delay to simulate real usage
-                        await asyncio.sleep(0.01)
+                    async with app.run_test():
+                        # Rapid navigation
+                        for _ in range(min(5, len(items))):
+                            await app.action_next_item()
+                            # Small delay to simulate real usage
+                            await asyncio.sleep(0.01)
 
                     # Should handle rapid changes without errors
                     assert app.current_item_index > 0

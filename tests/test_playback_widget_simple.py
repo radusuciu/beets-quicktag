@@ -278,18 +278,26 @@ class TestPlaybackWidgetCore:
             mock_player.seek.assert_called_with(0.0)  # Clamped to 0
 
     def test_eof_detection_at_end(self):
-        """Test EOF detection when at end of track."""
+        """EOF is detected when a playing player becomes inactive."""
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
             mock_player = Mock()
             mock_player.duration = 30.0
-            mock_player.curr_pos = 29.6  # Within 0.5s of end
-            mock_player.active = False
+            mock_player.curr_pos = 15.0
+            mock_player.active = True
+            mock_player.playing = True
             widget.player = mock_player
             widget._current_path = "test.mp3"
 
             with patch.object(widget, "post_message") as mock_post:
+                widget._check_eof()
+                mock_post.assert_not_called()
+
+                # just_playback after a natural end: inactive, position reset
+                mock_player.active = False
+                mock_player.playing = False
+                mock_player.curr_pos = 0.0
                 widget._check_eof()
 
                 mock_post.assert_called_once()
@@ -297,14 +305,15 @@ class TestPlaybackWidgetCore:
                 assert isinstance(args[0], PlaybackEnded)
 
     def test_eof_detection_not_at_end(self):
-        """Test EOF detection when not at end."""
+        """An inactive player that never played is not an EOF."""
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
             mock_player = Mock()
             mock_player.duration = 30.0
-            mock_player.curr_pos = 15.0  # Middle of track
+            mock_player.curr_pos = 0.0
             mock_player.active = False
+            mock_player.playing = False
             widget.player = mock_player
             widget._current_path = "test.mp3"
 
