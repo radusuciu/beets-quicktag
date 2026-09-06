@@ -10,7 +10,7 @@ from .app import QuickTagApp
 
 class QuickTagPlugin(BeetsPlugin):
     def __init__(self):
-        super(QuickTagPlugin, self).__init__()
+        super().__init__()
         self.config.add(
             {
                 "categories": {},
@@ -52,7 +52,8 @@ class QuickTagPlugin(BeetsPlugin):
 
         if not categories_config:
             ui.print_(
-                "No categories defined in the configuration. Please configure the quicktag plugin."
+                "No categories defined in the configuration. "
+                "Please configure the quicktag plugin."
             )
             ui.print_("Example configuration:")
             ui.print_("quicktag:")
