@@ -271,6 +271,12 @@ def autoplay_configs() -> dict[str, dict[str, bool]]:
             "keep_playing_on_track_change_if_playing": False,
             "autonext_at_track_end": True,
         },
+        "track_change_only": {
+            "autoplay_at_launch": False,
+            "autoplay_on_track_change": True,
+            "keep_playing_on_track_change_if_playing": False,
+            "autonext_at_track_end": False,
+        },
     }
 
 
