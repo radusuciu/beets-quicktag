@@ -388,3 +388,56 @@ class TestPlaybackProgressWidgetIntegration:
         mock_player.curr_pos = 5.0
         widget._update_progress_display()
         assert widget._progress_bar.progress == 5.0
+
+
+class TestFinishedTrackDisplay:
+    """Bug 13: a finished track must read as complete, not as unplayed."""
+
+    @staticmethod
+    def _widget_at_end() -> PlaybackProgressWidget:
+        """just_playback reports curr_pos == 0 once a track has finished."""
+        player = Mock(spec=Playback)
+        player.duration = 10.0
+        player.curr_pos = 0.0
+
+        widget = PlaybackProgressWidget(player)
+        widget._progress_bar = Mock()
+        widget._time_remaining_display = Mock()
+        return widget
+
+    def test_marked_ended_shows_a_full_bar(self):
+        widget = self._widget_at_end()
+
+        widget.mark_ended()
+        widget._update_progress_display()
+
+        assert widget._progress_bar.total == 10.0
+        assert widget._progress_bar.progress == 10.0
+        widget._time_remaining_display.update.assert_called_once_with("-00:00")
+
+    def test_clear_ended_returns_to_the_players_position(self):
+        widget = self._widget_at_end()
+        widget.mark_ended()
+        widget._update_progress_display()
+
+        widget.clear_ended()
+        widget.player.curr_pos = 2.0
+        widget._time_remaining_display.update.reset_mock()
+        widget._update_progress_display()
+
+        assert widget._progress_bar.progress == 2.0
+        widget._time_remaining_display.update.assert_called_once_with("-00:08")
+
+    def test_ended_is_ignored_without_a_known_duration(self):
+        """No duration means no track: the widget hides itself as before."""
+        player = Mock(spec=Playback)
+        player.duration = None
+        player.curr_pos = 0.0
+        widget = PlaybackProgressWidget(player)
+        widget._progress_bar = Mock()
+        widget._time_remaining_display = Mock()
+
+        widget.mark_ended()
+        widget._update_progress_display()
+
+        assert widget._progress_bar.visible is False

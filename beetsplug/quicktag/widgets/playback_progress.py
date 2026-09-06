@@ -48,7 +48,19 @@ class PlaybackProgressWidget(Widget):
         self._playback_timer: Timer | None = None
         self._progress_bar = ProgressBar(show_percentage=False, show_eta=False)
         self._time_remaining_display = Static("", id="time_remaining_text")
+        # Set by PlaybackWidget when it detects end of track. just_playback
+        # resets curr_pos to 0 there, which would otherwise look exactly like a
+        # track that has never been played.
+        self._ended: bool = False
         # Note: just_playback doesn't have property observation, so we'll use polling
+
+    def mark_ended(self) -> None:
+        """Show the current track as played to completion."""
+        self._ended = True
+
+    def clear_ended(self) -> None:
+        """Follow the player's position again (a track was loaded or started)."""
+        self._ended = False
 
     async def on_mount(self) -> None:
         self._playback_timer = self.set_interval(1 / 2, self._update_progress_display)
@@ -69,10 +81,15 @@ class PlaybackProgressWidget(Widget):
             and self.player.duration > 0
         ):
             duration = self.player.duration
-            time_pos = self.player.curr_pos if self.player.curr_pos is not None else 0
-            time_remaining_seconds = (
-                duration - time_pos if time_pos is not None else None
-            )
+            if self._ended:
+                # The track finished: show it as complete rather than letting
+                # the player's reset position read as unplayed.
+                time_pos = duration
+            elif self.player.curr_pos is not None:
+                time_pos = self.player.curr_pos
+            else:
+                time_pos = 0
+            time_remaining_seconds = duration - time_pos
 
             self._progress_bar.total = duration
             self._progress_bar.progress = time_pos
