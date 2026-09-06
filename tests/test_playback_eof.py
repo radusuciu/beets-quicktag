@@ -15,7 +15,7 @@ import pytest
 from beets.library import Item, Library
 from textual.app import App, ComposeResult
 
-from beetsplug.quicktag.app import QuickTagApp
+from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
 from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackWidget
 
 
@@ -186,11 +186,14 @@ class TestAppHandlesPlaybackEnded:
         handler = getattr(app, PlaybackEnded.handler_name)
 
         with (
-            patch.object(app, "_navigate", new_callable=AsyncMock) as navigate,
+            patch.object(
+                app, "_navigate", new_callable=AsyncMock, return_value=False
+            ) as navigate,
             patch.object(app.playback_widget, "play") as play,
         ):
             await handler(PlaybackEnded())
-            navigate.assert_not_called()
+            # _navigate reports the end of the list; playback must not restart
+            navigate.assert_called_once_with(NavigateDirection.FORWARD)
             play.assert_not_called()
 
 
