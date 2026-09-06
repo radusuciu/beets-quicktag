@@ -331,6 +331,17 @@ class QuickTagApp(App):
 
     async def on_playback_ended(self, message: PlaybackEnded) -> None:
         """Handles the PlaybackEnded message from PlaybackWidget."""
+        current_generation = self.playback_widget.playback_generation
+        if message.generation != current_generation:
+            # EOF is only noticed on the next poll, so the user may have changed
+            # track or restarted this one in the meantime; acting now would skip
+            # an item or cut the new track short.
+            self.log.info(
+                f"Ignoring stale PlaybackEnded (generation {message.generation}, "
+                f"current {current_generation})."
+            )
+            return
+
         self.log.info(
             "PlaybackEnded received. autonext_at_track_end: "
             f"{self.autonext_at_track_end_enabled}"
