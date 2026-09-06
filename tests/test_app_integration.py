@@ -16,10 +16,11 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Library
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
+from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from beetsplug.quicktag.widgets.playback import PlaybackEnded
 
 
@@ -759,3 +760,73 @@ class TestQuickTagAppMarkupSafety:
             selection_list = app.query_one("#selection-genre", CustomSelectionList)
             prompt = selection_list.get_option_at_index(0).prompt
             assert prompt.plain == "lo-fi [chill]"
+
+
+class TestQuickTagAppNavigationBindings:
+    """Left/Right must navigate tracks without stealing keys from the input."""
+
+    @pytest.mark.asyncio
+    async def test_left_moves_cursor_in_comments_input(
+        self, temp_beets_library: Library
+    ):
+        """With the comments input focused, Left moves the cursor, not the track."""
+        items = list(temp_beets_library.items())
+        if len(items) < 2:
+            pytest.skip("Need at least 2 items for navigation test")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test() as pilot:
+            # Move off the first item so that Left would visibly change track.
+            await pilot.press("right")
+            assert app.current_item_index == 1
+
+            comments_input = app.query_one("#comments-input", InputWithLabel).query_one(
+                Input
+            )
+            comments_input.value = "hello"
+            comments_input.focus()
+            await pilot.pause()
+            comments_input.cursor_position = 3
+
+            await pilot.press("left")
+
+            assert comments_input.cursor_position == 2
+            assert app.current_item_index == 1
+
+    @pytest.mark.asyncio
+    async def test_right_advances_track_from_selection_list(
+        self, temp_beets_library: Library
+    ):
+        """With a selection list focused, Right still moves to the next track."""
+        items = list(temp_beets_library.items())
+        if len(items) < 2:
+            pytest.skip("Need at least 2 items for navigation test")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test() as pilot:
+            app.query_one("#selection-genre", CustomSelectionList).focus()
+            await pilot.pause()
+
+            await pilot.press("right")
+
+            assert app.current_item_index == 1
