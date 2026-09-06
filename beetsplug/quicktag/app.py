@@ -6,6 +6,7 @@ from beets.library import Library as BeetsLibrary
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.content import Content
 from textual.dom import NoMatches
 from textual.widgets import Footer, Static
 from textual.widgets.selection_list import Selection
@@ -43,7 +44,9 @@ class HeaderWidget(Vertical):
     def __init__(self, playback_widget: PlaybackWidget, item=None, **kwargs):
         super().__init__(**kwargs)
         self.item: BeetsItem = item
-        self._header_text_display = Static(id="header_text_content")
+        # markup=False: titles and status messages are literal text, and
+        # real-world metadata contains brackets (e.g. "Song [feat. X]").
+        self._header_text_display = Static(id="header_text_content", markup=False)
         self.playback_widget = playback_widget
 
     def compose(self) -> ComposeResult:
@@ -140,13 +143,13 @@ class QuickTagApp(App):
         if self.item:
             for category_name, options in self.categories:
                 selection_options = [
-                    Selection(option_text, option_idx)
+                    Selection(Content(option_text), option_idx)
                     for option_idx, option_text in enumerate(options)
                 ]
                 category_selection_list = CustomSelectionList(
                     *selection_options, id=f"selection-{category_name}"
                 )
-                category_selection_list.border_title = category_name
+                category_selection_list.border_title = Content(category_name)
                 yield category_selection_list
             yield InputWithLabel(input_label="Comments:", id="comments-input")
         else:
