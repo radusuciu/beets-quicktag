@@ -49,12 +49,14 @@ class CustomSelectionList(SelectionList):
         start_search_from_idx = (current_highlight_idx + 1) % num_options
 
         # Iterate through all options once, effectively wrapping around the list.
-        # The loop runs num_options times to check every item starting from start_search_from_idx.
+        # The loop runs num_options times to check every item starting from
+        # start_search_from_idx.
         for i in range(num_options):
             check_idx = (start_search_from_idx + i) % num_options
 
             selection_item = self.options[check_idx]
-            # Assuming selection_item.prompt is always a string or Text-compatible object
+            # Assuming selection_item.prompt is always a string or
+            # Text-compatible object
             option_text = str(selection_item.prompt).lower()
 
             if option_text.startswith(self.search_char):
@@ -67,4 +69,5 @@ class CustomSelectionList(SelectionList):
         # If the loop completes, no item starting with self.search_char was found
         # (from the position after the current highlight, wrapping around).
         # The current highlight remains unchanged.
-        event.stop()  # Consume the event even if no match is found to prevent other actions.
+        # Consume the event even if no match is found to prevent other actions.
+        event.stop()

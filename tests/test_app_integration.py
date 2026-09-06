@@ -93,7 +93,7 @@ class TestQuickTagAppPlaybackConfiguration:
         if len(items) < 2:
             pytest.skip("Need at least 2 items for track change test")
 
-        for config_name, config in autoplay_configs.items():
+        for _config_name, config in autoplay_configs.items():
             app = QuickTagApp(
                 lib=temp_beets_library,
                 items=items,

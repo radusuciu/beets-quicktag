@@ -36,11 +36,14 @@ class PlaybackWidget(Widget):
             self._playback_progress = PlaybackProgressWidget(player=self.player)
             # self.log.info("just_playback Player initialized in PlaybackWidget")
         except Exception:
-            # self.log.error(f"Failed to initialize just_playback player in PlaybackWidget: {e}")
+            # self.log.error(
+            #     f"Failed to initialize just_playback player in PlaybackWidget: {e}"
+            # )
             self.player = None
 
     async def on_mount(self) -> None:
-        # Start a timer to check for end-of-file conditions since just_playback doesn't have property observation
+        # Start a timer to check for end-of-file conditions since
+        # just_playback doesn't have property observation
         self._eof_check_timer = self.set_interval(0.5, self._check_eof)
 
     async def on_unmount(self) -> None:
@@ -115,16 +118,19 @@ class PlaybackWidget(Widget):
             if self.player.paused:
                 self.player.resume()
                 self.log.info(
-                    f"just_playback: Resumed play for {self._current_path} via play() method."
+                    f"just_playback: Resumed play for {self._current_path} "
+                    "via play() method."
                 )
             elif not self.player.playing:
                 self.player.play()
                 self.log.info(
-                    f"just_playback: Started play for {self._current_path} via play() method."
+                    f"just_playback: Started play for {self._current_path} "
+                    "via play() method."
                 )
             else:
                 self.log.info(
-                    f"just_playback: Already playing {self._current_path}. play() called."
+                    f"just_playback: Already playing {self._current_path}. "
+                    "play() called."
                 )
             # Arm end-of-track detection now, so a track shorter than the poll
             # interval is still noticed by _check_eof.
@@ -146,7 +152,8 @@ class PlaybackWidget(Widget):
         try:
             self.player.pause()
             self.log.info(
-                f"just_playback: Paused playback for {self._current_path}. Player pause state: {self.player.paused}"
+                f"just_playback: Paused playback for {self._current_path}. "
+                f"Player pause state: {self.player.paused}"
             )
         except Exception as e:
             self.log.error(
@@ -170,7 +177,8 @@ class PlaybackWidget(Widget):
     def stop(self) -> None:
         if self.player and self._current_path:
             self.log.info(
-                f"just_playback: Stopping playback for {self._current_path or 'unknown file'}"
+                "just_playback: Stopping playback for "
+                f"{self._current_path or 'unknown file'}"
             )
             self.player.stop()
 
