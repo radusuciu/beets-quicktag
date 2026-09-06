@@ -133,10 +133,16 @@ class TestPlaybackGeneration:
         widget.play()
         assert widget.playback_generation > after_load
 
-    def test_generation_does_not_advance_on_a_failed_load(self, widget: PlaybackWidget):
+    def test_generation_advances_on_a_failed_load(self, widget: PlaybackWidget):
+        """A failed load is a track change too.
+
+        The user asked for a different track; whatever was playing until now is
+        over, so an EOF already queued for it must be dropped rather than
+        advancing the app a second time.
+        """
         start = widget.playback_generation
         widget.load_track("/nonexistent/file.mp3")
-        assert widget.playback_generation == start
+        assert widget.playback_generation > start
 
 
 class TestProgressDisplayIsToldAboutEof:

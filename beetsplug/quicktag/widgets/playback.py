@@ -146,6 +146,10 @@ class PlaybackWidget(Widget):
 
         self._current_path = None
         self._was_playing = False
+        # A failed load is still a track change: bump the generation so an EOF
+        # posted for the track that was playing until now is dropped as stale
+        # instead of advancing a second time.
+        self._playback_generation += 1
 
         try:
             self.notify(
