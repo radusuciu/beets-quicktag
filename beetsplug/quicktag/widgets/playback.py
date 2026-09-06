@@ -1,3 +1,5 @@
+import os
+
 from just_playback import Playback
 from textual.app import ComposeResult
 from textual.message import Message
@@ -95,14 +97,46 @@ class PlaybackWidget(Widget):
         if self._current_path != new_path:
             self._was_playing = False
             try:
+                # load_file() raises before it tears down the current stream, so
+                # check first: otherwise a missing file leaves the previous
+                # track playing with no loaded path to stop it.
+                if not os.path.exists(new_path):
+                    raise FileNotFoundError(f"Audio file not found: {new_path}")
                 self.player.load_file(new_path)
-                self._current_path = new_path
-                self.log.info(f"just_playback: Loaded track {new_path}")
             except Exception as e:
-                self.log.error(f"just_playback: Error loading track {new_path}: {e}")
-                self._current_path = None
+                self._handle_load_failure(new_path, e)
+                return
+            self._current_path = new_path
+            self.log.info(f"just_playback: Loaded track {new_path}")
         else:
             self.log.info(f"just_playback: Track {new_path} already loaded.")
+
+    def _handle_load_failure(self, new_path: str, error: Exception) -> None:
+        """Silence whatever is still playing and tell the user why."""
+        self.log.error(f"just_playback: Error loading track {new_path}: {error}")
+
+        if self.player:
+            try:
+                self.player.stop()
+            except Exception as stop_error:
+                self.log.error(
+                    f"just_playback: Error stopping playback after a failed "
+                    f"load of {new_path}: {stop_error}"
+                )
+
+        self._current_path = None
+        self._was_playing = False
+
+        try:
+            self.notify(
+                f"Cannot load audio: {new_path}",
+                title="Playback",
+                severity="error",
+            )
+        except Exception:
+            # notify() needs an active app; unmounted widgets have nowhere to
+            # show the message, and the error is already logged.
+            pass
 
     def play(self) -> None:
         """Starts or resumes playback of the currently loaded track."""
