@@ -16,9 +16,16 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Library
+from textual.widgets import Static
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
+from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.playback import PlaybackEnded
+
+
+def header_text(app: QuickTagApp) -> str:
+    """Return the text the header Static actually renders."""
+    return app.query_one("#header_text_content", Static).render().plain
 
 
 class TestQuickTagAppPlaybackConfiguration:
@@ -697,3 +704,58 @@ class TestQuickTagAppRealPlaybackIntegration:
 
                     # Should handle rapid changes without errors
                     assert app.current_item_index > 0
+
+
+class TestQuickTagAppMarkupSafety:
+    """Bracketed text from metadata and config must render literally."""
+
+    @pytest.mark.asyncio
+    async def test_header_renders_bracketed_title_literally(
+        self, temp_beets_library: Library
+    ):
+        """A title like 'Foo [feat. Bar]' must not crash or lose the brackets."""
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        items[0].title = "Foo [feat. Bar]"
+        items[0].store()
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test():
+            assert "Foo [feat. Bar]" in header_text(app)
+
+    @pytest.mark.asyncio
+    async def test_option_text_with_brackets_renders_literally(
+        self, temp_beets_library: Library
+    ):
+        """Category options come from user config and may contain brackets."""
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["lo-fi [chill]", "Rock"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test():
+            selection_list = app.query_one("#selection-genre", CustomSelectionList)
+            prompt = selection_list.get_option_at_index(0).prompt
+            assert prompt.plain == "lo-fi [chill]"
