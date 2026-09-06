@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import Optional
 
 from beets.dbcore.db import Results as BeetsResults
 from beets.library import Item as BeetsItem
@@ -56,7 +55,7 @@ class HeaderWidget(Vertical):
         """Set the header text when the widget is mounted."""
         self.update_header()
 
-    def update_header(self, item: Optional[BeetsItem] = None) -> None:
+    def update_header(self, item: BeetsItem | None = None) -> None:
         """Updates the header text."""
         if item:
             self.item = item
@@ -111,7 +110,9 @@ class QuickTagApp(App):
         self.autoplay_at_launch_enabled = autoplay_at_launch_enabled
         self.autonext_at_track_end_enabled = autonext_at_track_end_enabled
         self.autosave_on_quit_enabled = autosave_on_quit_enabled
-        self.keep_playing_on_track_change_if_playing_enabled = keep_playing_on_track_change_if_playing_enabled
+        self.keep_playing_on_track_change_if_playing_enabled = (
+            keep_playing_on_track_change_if_playing_enabled
+        )
 
         self.current_item_index = 0
         self.item = items[0] if items else None
@@ -182,7 +183,7 @@ class QuickTagApp(App):
         """Handle changes to the current item."""
         # Capture the current playback state before changing items
         was_playing_before = self.playback_widget.is_playing()
-        
+
         if save_current_item_tags:
             await self._save_current_item_tags()
         self.item = item
@@ -204,18 +205,22 @@ class QuickTagApp(App):
 
         # Determine whether to start playing the new track
         should_play = False
-        
+
         if was_playing_before and self.keep_playing_on_track_change_if_playing_enabled:
             # If we were playing before and the setting allows it, continue playing the new track
             should_play = True
-            self.log.info("Continuing playback with new track (was playing before and keep_playing_on_track_change_if_playing enabled)")
+            self.log.info(
+                "Continuing playback with new track (was playing before and keep_playing_on_track_change_if_playing enabled)"
+            )
         elif self.autoplay_on_track_change_enabled:
             # If autoplay is enabled, start playing regardless of previous state
             should_play = True
             self.log.info("Starting playback due to autoplay_on_track_change setting")
         else:
             # We were paused or keep_playing_on_track_change_if_playing is disabled, stay paused
-            self.log.info("Keeping playback paused (was paused, autoplay disabled, or keep_playing_on_track_change_if_playing disabled)")
+            self.log.info(
+                "Keeping playback paused (was paused, autoplay disabled, or keep_playing_on_track_change_if_playing disabled)"
+            )
 
         if should_play:
             self.playback_widget.play()

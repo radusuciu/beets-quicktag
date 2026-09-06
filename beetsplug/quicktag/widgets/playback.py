@@ -1,8 +1,8 @@
 from just_playback import Playback
 from textual.app import ComposeResult
 from textual.message import Message
-from textual.widget import Widget
 from textual.timer import Timer
+from textual.widget import Widget
 
 from .playback_progress import PlaybackProgressWidget
 
@@ -52,15 +52,14 @@ class PlaybackWidget(Widget):
         if (
             self.player
             and self._current_path
-            and hasattr(self.player, 'duration')
-            and hasattr(self.player, 'curr_pos')
+            and hasattr(self.player, "duration")
+            and hasattr(self.player, "curr_pos")
             and self.player.duration
             and self.player.curr_pos is not None
         ):
             # Check if we've reached the end (within 0.5 seconds tolerance)
-            if (
-                not self.player.active
-                and self.player.curr_pos >= (self.player.duration - 0.5)
+            if not self.player.active and self.player.curr_pos >= (
+                self.player.duration - 0.5
             ):
                 self.log.info(
                     f"just_playback: End of file - {self._current_path or 'Unknown file'}"
@@ -71,13 +70,15 @@ class PlaybackWidget(Widget):
         if self._eof_check_timer:
             self._eof_check_timer.stop()
             self._eof_check_timer = None
-        
+
         if self.player:
             try:
                 self.player.stop()
                 self.log.info("just_playback player stopped from PlaybackWidget.")
             except Exception as e:
-                self.log.error(f"Error stopping just_playback player in PlaybackWidget: {e}")
+                self.log.error(
+                    f"Error stopping just_playback player in PlaybackWidget: {e}"
+                )
             self.player = None
         self._current_path = None
 
@@ -127,7 +128,9 @@ class PlaybackWidget(Widget):
                     f"just_playback: Already playing {self._current_path}. play() called."
                 )
         except Exception as e:
-            self.log.error(f"just_playback: Error during play for {self._current_path}: {e}")
+            self.log.error(
+                f"just_playback: Error during play for {self._current_path}: {e}"
+            )
 
     def pause(self) -> None:
         """Pauses playback of the currently playing track."""
@@ -144,7 +147,9 @@ class PlaybackWidget(Widget):
                 f"just_playback: Paused playback for {self._current_path}. Player pause state: {self.player.paused}"
             )
         except Exception as e:
-            self.log.error(f"just_playback: Error during pause for {self._current_path}: {e}")
+            self.log.error(
+                f"just_playback: Error during pause for {self._current_path}: {e}"
+            )
 
     def play_pause(self) -> None:
         """Toggles play/pause for the currently loaded track."""
@@ -170,9 +175,15 @@ class PlaybackWidget(Widget):
         self._current_path = None
 
     def seek_relative(self, seconds: int) -> None:
-        if self.player and hasattr(self.player, 'curr_pos') and hasattr(self.player, 'duration'):
+        if (
+            self.player
+            and hasattr(self.player, "curr_pos")
+            and hasattr(self.player, "duration")
+        ):
             if self.player.duration and self.player.curr_pos is not None:
-                new_position = max(0, min(self.player.curr_pos + seconds, self.player.duration))
+                new_position = max(
+                    0, min(self.player.curr_pos + seconds, self.player.duration)
+                )
                 self.player.seek(new_position)
 
     def is_playing(self) -> bool:

@@ -63,14 +63,16 @@ class PlaybackProgressWidget(Widget):
     def _update_progress_display(self, *args, **kwargs) -> None:
         if (
             self.player
-            and hasattr(self.player, 'duration')
-            and hasattr(self.player, 'curr_pos')
+            and hasattr(self.player, "duration")
+            and hasattr(self.player, "curr_pos")
             and self.player.duration is not None
             and self.player.duration > 0
         ):
             duration = self.player.duration
             time_pos = self.player.curr_pos if self.player.curr_pos is not None else 0
-            time_remaining_seconds = duration - time_pos if time_pos is not None else None
+            time_remaining_seconds = (
+                duration - time_pos if time_pos is not None else None
+            )
 
             self._progress_bar.total = duration
             self._progress_bar.progress = time_pos

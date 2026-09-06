@@ -1,6 +1,6 @@
+from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Input, Label
-from textual.app import ComposeResult
 
 
 class InputWithLabel(Widget):
@@ -25,7 +25,7 @@ class InputWithLabel(Widget):
         self.input_label = input_label
         super().__init__(id=id)
 
-    def compose(self) -> ComposeResult:  
+    def compose(self) -> ComposeResult:
         yield Label(self.input_label)
         yield Input(placeholder="Enter comments here...")
 
