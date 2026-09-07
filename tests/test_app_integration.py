@@ -1077,6 +1077,102 @@ class TestQuickTagAppNavigationBindings:
             assert {"slash", "less_than_sign", "greater_than_sign"} <= footer_keys
 
 
+class TestMediaKeyBindings:
+    """Hardware media keys, delivered via the kitty keyboard protocol, control
+    playback and navigation regardless of which widget has focus."""
+
+    def _make_app(self, temp_beets_library: Library) -> QuickTagApp:
+        return QuickTagApp(
+            lib=temp_beets_library,
+            items=list(temp_beets_library.items()),
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_media_play_pause_toggles_playback(self, temp_beets_library: Library):
+        if not list(temp_beets_library.items()):
+            pytest.skip("No items in test library")
+        app = self._make_app(temp_beets_library)
+
+        with patch.object(app.playback_widget, "play_pause") as mock_play_pause:
+            async with app.run_test() as pilot:
+                await pilot.press("media_play_pause")
+
+        mock_play_pause.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_media_stop_pauses_without_unloading(
+        self, temp_beets_library: Library
+    ):
+        if not list(temp_beets_library.items()):
+            pytest.skip("No items in test library")
+        app = self._make_app(temp_beets_library)
+
+        with (
+            patch.object(app.playback_widget, "pause") as mock_pause,
+            patch.object(app.playback_widget, "stop") as mock_stop,
+        ):
+            async with app.run_test() as pilot:
+                await pilot.press("media_stop")
+
+        mock_pause.assert_called_once()
+        mock_stop.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_media_track_keys_navigate(self, temp_beets_library: Library):
+        if len(list(temp_beets_library.items())) < 2:
+            pytest.skip("Need at least 2 items for navigation test")
+        app = self._make_app(temp_beets_library)
+
+        async with app.run_test() as pilot:
+            await pilot.press("media_track_next")
+            assert app.current_item_index == 1
+
+            await pilot.press("media_track_previous")
+            assert app.current_item_index == 0
+
+    @pytest.mark.asyncio
+    async def test_media_keys_work_while_comments_input_focused(
+        self, temp_beets_library: Library
+    ):
+        """Unlike Left/Right, media keys are never wanted by the input."""
+        if len(list(temp_beets_library.items())) < 2:
+            pytest.skip("Need at least 2 items for navigation test")
+        app = self._make_app(temp_beets_library)
+
+        with patch.object(app.playback_widget, "play_pause") as mock_play_pause:
+            async with app.run_test() as pilot:
+                app.query_one("#comments-input", InputWithLabel).query_one(
+                    Input
+                ).focus()
+                await pilot.pause()
+
+                await pilot.press("media_play_pause")
+                await pilot.press("media_track_next")
+
+                assert app.current_item_index == 1
+
+        mock_play_pause.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_media_keys_are_hidden_from_footer(self, temp_beets_library: Library):
+        """The footer would print the raw key names, so they stay hidden."""
+        if not list(temp_beets_library.items()):
+            pytest.skip("No items in test library")
+        app = self._make_app(temp_beets_library)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+
+        assert not any(key.startswith("media_") for key in footer_keys)
+
+
 class TestTerminalTitle:
     """The terminal window title follows what is audibly playing."""
 
