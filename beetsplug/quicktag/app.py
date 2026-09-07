@@ -21,6 +21,8 @@ from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidge
 # Terminal window title whenever nothing is audibly playing.
 FALLBACK_TERMINAL_TITLE = "Beets QuickTag"
 
+CATEGORY_PLACEHOLDER = "New category name, Enter to add, Esc to cancel"
+
 # Control characters (C0 plus DEL) in metadata could terminate or extend the
 # OSC escape sequence used to set the terminal title, so they are stripped.
 _CONTROL_CHARS = dict.fromkeys((*range(0x20), 0x7F))
@@ -90,6 +92,7 @@ class QuickTagApp(App):
         ("/", "play_pause_current_item", "Play/Pause"),
         ("<", "seek_backward(5)", "Seek -5s"),
         (">", "seek_forward(5)", "Seek +5s"),
+        Binding("ctrl+n", "add_category", "New category"),
         # Hardware media keys, as named by the kitty keyboard protocol. Hidden
         # because the footer would print the raw key names.
         Binding("media_play_pause", "media_play_pause", show=False),
@@ -101,6 +104,12 @@ class QuickTagApp(App):
     DEFAULT_CSS = """
     Screen {
         align: center middle;
+    }
+    #new-category-input, #new-category-input:focus {
+        height: 1;
+        border: none;
+        padding: 0 1;
+        margin: 0 1;
     }
     """
 
@@ -212,6 +221,11 @@ class QuickTagApp(App):
                 yield CategoryPanel(
                     category_name, self.definitions.options(category_name)
                 )
+            new_category_input = Input(
+                id="new-category-input", placeholder=CATEGORY_PLACEHOLDER
+            )
+            new_category_input.display = False
+            yield new_category_input
             yield InputWithLabel(input_label="Comments:", id="comments-input")
         else:
             yield Static("No items to tag.")
@@ -253,6 +267,45 @@ class QuickTagApp(App):
         self._persist_definitions()
         panel.add_option(value, select=True)
         panel.close_input()
+
+    def _new_category_input(self) -> Input:
+        return self.query_one("#new-category-input", Input)
+
+    def action_add_category(self) -> None:
+        """ctrl+n: reveal the new-category input above the comments field."""
+        try:
+            new_category_input = self._new_category_input()
+        except NoMatches:
+            return
+        new_category_input.value = ""
+        new_category_input.placeholder = CATEGORY_PLACEHOLDER
+        new_category_input.display = True
+        new_category_input.focus()
+
+    def _close_new_category_input(self) -> None:
+        new_category_input = self._new_category_input()
+        new_category_input.display = False
+        new_category_input.value = ""
+        new_category_input.placeholder = CATEGORY_PLACEHOLDER
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the new-category input. Panel inputs never reach here
+        (the panel stops their Submitted), and the comments Input has no id."""
+        if event.input.id != "new-category-input":
+            return
+        event.stop()
+        try:
+            name = self.definitions.add_category(event.value)
+        except ValueError as error:
+            event.input.value = ""
+            event.input.placeholder = str(error)
+            event.input.focus()
+            return
+        self._persist_definitions()
+        panel = CategoryPanel(name, [])
+        await self.mount(panel, before=event.input)
+        self._close_new_category_input()
+        panel.selection_list.focus()
 
     async def action_quit(self) -> None:
         """Action to quit the application."""

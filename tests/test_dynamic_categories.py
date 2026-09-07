@@ -7,12 +7,14 @@ from pathlib import Path
 
 import pytest
 from beets.library import Library
+from textual.widgets import Input
 
 from beetsplug.quicktag.app import QuickTagApp
 from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.definitions_file import read_definitions_file
 from beetsplug.quicktag.widgets.category_panel import CategoryPanel
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
+from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 
 LIST_FIELD = "genres"
 needs_list_field = pytest.mark.skipif(
@@ -353,3 +355,122 @@ class TestAddOptionFlow:
             panel.close_input()
             await pilot.press("plus")
             assert "Enter to add" in panel.input.placeholder
+
+
+class TestAddCategoryFlow:
+    @pytest.mark.asyncio
+    async def test_ctrl_n_reveals_input_above_comments(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is False
+            await pilot.press("ctrl+n")
+            assert new_input.display is True
+            assert app.focused is new_input
+            screen_children = list(app.screen.children)
+            comments_index = screen_children.index(app.query_one(InputWithLabel))
+            assert screen_children[comments_index - 1] is new_input
+
+    @pytest.mark.asyncio
+    async def test_enter_mounts_empty_panel_before_comments_and_persists(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "i", "b", "e", "enter")
+            await pilot.pause()
+            assert app.definitions.categories == ["mood", "vibe"]
+            panels = [p.id for p in app.query(CategoryPanel)]
+            assert panels == ["panel-mood", "panel-vibe"]
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert vibe.selection_list.option_count == 0
+            assert app.focused is vibe.selection_list
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is False
+            assert new_input.value == ""
+            screen_children = list(app.screen.children)
+            assert screen_children.index(vibe) < screen_children.index(new_input)
+            assert screen_children.index(new_input) < screen_children.index(
+                app.query_one(InputWithLabel)
+            )
+        assert read_definitions_file(path).to_mapping() == {
+            "mood": ["happy"],
+            "vibe": [],
+        }
+
+    @pytest.mark.asyncio
+    async def test_plus_then_enter_in_new_panel_adds_first_option(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "i", "b", "e", "enter")
+            await pilot.pause()
+            await pilot.press("plus", "a", "f", "r", "o", "enter")
+            assert app.definitions.options("vibe") == ["afro"]
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert vibe.selection_list.selected == ["afro"]
+
+    @pytest.mark.asyncio
+    async def test_new_category_is_saved_and_loaded(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "i", "b", "e", "enter")
+            await pilot.pause()
+            await pilot.press("plus", "a", "f", "r", "o", "enter")
+            item_id = app.item.id
+            await pilot.press("right")  # saves the first item
+            await pilot.press("left")  # reloads it
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert vibe.selection_list.selected == ["afro"]
+        assert temp_beets_library.get_item(item_id).get("vibe") == "afro"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("typed", "message_part"),
+        [
+            (["enter"], "letters, digits"),
+            (["m", "o", "o", "d", "enter"], "already exists"),
+            (["y", "e", "a", "r", "enter"], "built-in beets field"),
+            (["1", "a", "enter"], "letters, digits"),
+        ],
+    )
+    async def test_invalid_name_shows_error_and_stays_open(
+        self, temp_beets_library: Library, typed: list[str], message_part: str
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", *typed)
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is True
+            assert message_part in new_input.placeholder
+            assert new_input.value == ""
+            assert app.focused is new_input
+            assert app.definitions.categories == ["mood"]
+
+    @pytest.mark.asyncio
+    async def test_comments_enter_does_not_add_a_category(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            app.query_one(InputWithLabel).query_one(Input).focus()
+            await pilot.press("h", "i", "enter")
+            assert app.definitions.categories == ["mood"]
+            assert app.query_one(InputWithLabel).value == "hi"
+
+    @pytest.mark.asyncio
+    async def test_ctrl_n_works_with_no_categories_at_all(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "m", "o", "o", "d", "enter")
+            await pilot.pause()
+            assert app.definitions.categories == ["mood"]
+            assert app.query_one("#panel-mood", CategoryPanel)
