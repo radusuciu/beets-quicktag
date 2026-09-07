@@ -18,7 +18,11 @@ import pytest
 from textual.app import App
 from textual.widget import Widget
 
-from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackWidget
+from beetsplug.quicktag.widgets.playback import (
+    PlaybackEnded,
+    PlaybackStateChanged,
+    PlaybackWidget,
+)
 
 
 class _TestApp(App):
@@ -369,7 +373,12 @@ class TestPlaybackWidgetEOFDetection:
         with patch.object(widget, "post_message") as mock_post:
             widget.play()
             widget._check_eof()  # player already inactive again
-            mock_post.assert_called_once()
+            ended = [
+                call
+                for call in mock_post.call_args_list
+                if isinstance(call.args[0], PlaybackEnded)
+            ]
+            assert len(ended) == 1
 
 
 class TestPlaybackWidgetStateManagement:
@@ -631,3 +640,86 @@ class TestPlaybackWidgetMissingFile:
         fake_player_widget.load_track(str(nonexistent_file))  # must not raise
 
         assert fake_player_widget._current_path is None
+
+
+def _state_changes(mock_post: Mock) -> list[bool]:
+    """Return the `playing` flags of every PlaybackStateChanged posted."""
+    return [
+        call.args[0].playing
+        for call in mock_post.call_args_list
+        if isinstance(call.args[0], PlaybackStateChanged)
+    ]
+
+
+class TestPlaybackStateChangedMessages:
+    """PlaybackStateChanged is posted exactly when the playing state flips."""
+
+    @pytest.fixture
+    def widget(self, playback_widget: PlaybackWidget) -> PlaybackWidget:
+        """A widget with a mocked, stopped player and a loaded track."""
+        mock_player = Mock()
+        mock_player.playing = False
+        mock_player.paused = False
+        mock_player.active = False
+        playback_widget.player = mock_player
+        playback_widget._current_path = "test.mp3"
+        return playback_widget
+
+    def test_play_from_stopped_posts_playing(self, widget: PlaybackWidget) -> None:
+        with patch.object(widget, "post_message") as mock_post:
+            widget.play()
+        assert _state_changes(mock_post) == [True]
+
+    def test_play_while_playing_posts_nothing(self, widget: PlaybackWidget) -> None:
+        with patch.object(widget, "post_message") as mock_post:
+            widget.play()
+            widget.player.playing = True
+            widget.play()
+        assert _state_changes(mock_post) == [True]
+
+    def test_pause_posts_not_playing(self, widget: PlaybackWidget) -> None:
+        with patch.object(widget, "post_message") as mock_post:
+            widget.play()
+            widget.player.playing = True
+            widget.player.active = True
+            widget.pause()
+        assert _state_changes(mock_post) == [True, False]
+
+    def test_stop_posts_not_playing(self, widget: PlaybackWidget) -> None:
+        with patch.object(widget, "post_message") as mock_post:
+            widget.play()
+            widget.stop()
+        assert _state_changes(mock_post) == [True, False]
+
+    def test_stop_while_stopped_posts_nothing(self, widget: PlaybackWidget) -> None:
+        with patch.object(widget, "post_message") as mock_post:
+            widget.stop()
+        assert _state_changes(mock_post) == []
+
+    def test_eof_posts_not_playing(self, widget: PlaybackWidget) -> None:
+        with patch.object(widget, "post_message") as mock_post:
+            widget.play()
+            widget.player.playing = True
+            widget.player.active = True
+            widget._check_eof()
+            widget.player.playing = False
+            widget.player.active = False
+            widget._check_eof()
+        assert _state_changes(mock_post) == [True, False]
+
+    def test_loading_another_track_posts_not_playing(
+        self, widget: PlaybackWidget, mp3_files: dict[str, Path]
+    ) -> None:
+        """load_file() silently stops the current stream, so report the stop."""
+        with patch.object(widget, "post_message") as mock_post:
+            widget.play()
+            widget.load_track(str(mp3_files["short"]))
+        assert _state_changes(mock_post) == [True, False]
+
+    def test_failed_load_posts_not_playing(
+        self, widget: PlaybackWidget, nonexistent_file: Path
+    ) -> None:
+        with patch.object(widget, "post_message") as mock_post:
+            widget.play()
+            widget.load_track(str(nonexistent_file))
+        assert _state_changes(mock_post) == [True, False]

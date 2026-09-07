@@ -7,7 +7,7 @@
 
 This is a plugin for [beets](https://beets.io/) that scratches my own itch to categorize my music using custom tags, for DJing, as efficiently as possible. If it's not at a 1.0 release, it's probably not stable for use by others, though I'll still try and look at issues if for some reason you've found this (hi!).
 
-It's a work in progress with core functionality implemented. Use the `beet quicktag` command to launch an interactive TUI for quick music tagging.
+It's a work in progress with core functionality implemented. Use the `beet quicktag` command to launch an interactive TUI for quick music tagging. While a track plays, the terminal window title shows its artist and title.
 
 TODO:
 - add tests

@@ -21,7 +21,7 @@ from textual.widgets import Input, Static
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
-from beetsplug.quicktag.widgets.playback import PlaybackEnded
+from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackStateChanged
 
 
 def header_text(app: QuickTagApp) -> str:
@@ -958,3 +958,156 @@ class TestQuickTagAppNavigationBindings:
             await pilot.press("right")
 
             assert app.current_item_index == 1
+
+
+class TestTerminalTitle:
+    """The terminal window title follows what is audibly playing."""
+
+    FALLBACK = "Beets QuickTag"
+
+    def _make_app(self, lib: Library, items: list, **overrides: bool) -> QuickTagApp:
+        settings: dict[str, bool] = {
+            "autoplay_at_launch_enabled": False,
+            "autoplay_on_track_change_enabled": False,
+            "autonext_at_track_end_enabled": False,
+            "autosave_on_quit_enabled": False,
+            "keep_playing_on_track_change_if_playing_enabled": False,
+        }
+        settings.update(overrides)
+        return QuickTagApp(
+            lib=lib, items=items, categories=[("genre", ["Rock", "Pop"])], **settings
+        )
+
+    @staticmethod
+    def _last_title(mock_set_title: Mock) -> str:
+        return mock_set_title.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_mount_sets_fallback_title(self, temp_beets_library: Library):
+        items = list(temp_beets_library.items())
+        app = self._make_app(temp_beets_library, items)
+
+        with patch.object(app, "_set_terminal_title") as mock_set_title:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                assert self._last_title(mock_set_title) == self.FALLBACK
+
+    @pytest.mark.asyncio
+    async def test_playing_shows_artist_and_title(self, temp_beets_library: Library):
+        items = list(temp_beets_library.items())
+        app = self._make_app(temp_beets_library, items)
+
+        with patch.object(app, "_set_terminal_title") as mock_set_title:
+            async with app.run_test() as pilot:
+                app.playback_widget.post_message(PlaybackStateChanged(playing=True))
+                await pilot.pause()
+                expected = f"{items[0].artist} - {items[0].title}"
+                assert self._last_title(mock_set_title) == expected
+
+    @pytest.mark.asyncio
+    async def test_pausing_shows_fallback(self, temp_beets_library: Library):
+        items = list(temp_beets_library.items())
+        app = self._make_app(temp_beets_library, items)
+
+        with patch.object(app, "_set_terminal_title") as mock_set_title:
+            async with app.run_test() as pilot:
+                app.playback_widget.post_message(PlaybackStateChanged(playing=True))
+                await pilot.pause()
+                app.playback_widget.post_message(PlaybackStateChanged(playing=False))
+                await pilot.pause()
+                assert self._last_title(mock_set_title) == self.FALLBACK
+
+    @pytest.mark.asyncio
+    async def test_navigating_while_playing_shows_new_item(
+        self, temp_beets_library: Library
+    ):
+        """End to end through the real player: the title follows the track."""
+        items = list(temp_beets_library.items())
+        if len(items) < 2:
+            pytest.skip("Need at least 2 items")
+        app = self._make_app(
+            temp_beets_library,
+            items,
+            autoplay_at_launch_enabled=True,
+            keep_playing_on_track_change_if_playing_enabled=True,
+        )
+        if app.playback_widget.player is None:
+            pytest.skip("no audio device")
+
+        with (
+            patch.object(app, "_save_current_item_tags", new_callable=AsyncMock),
+            patch.object(app, "_set_terminal_title") as mock_set_title,
+        ):
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                assert (
+                    self._last_title(mock_set_title)
+                    == f"{items[0].artist} - {items[0].title}"
+                )
+                await app.action_next_item()
+                await pilot.pause()
+                assert (
+                    self._last_title(mock_set_title)
+                    == f"{items[1].artist} - {items[1].title}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_track_end_shows_fallback(self, temp_beets_library: Library):
+        items = list(temp_beets_library.items())
+        app = self._make_app(temp_beets_library, items, autoplay_at_launch_enabled=True)
+        if app.playback_widget.player is None:
+            pytest.skip("no audio device")
+
+        with patch.object(app, "_set_terminal_title") as mock_set_title:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                assert self._last_title(mock_set_title) != self.FALLBACK
+                # Simulate the stream reaching its end before the next poll.
+                app.playback_widget.player.stop()
+                app.playback_widget._check_eof()
+                await pilot.pause()
+                assert self._last_title(mock_set_title) == self.FALLBACK
+
+    @pytest.mark.asyncio
+    async def test_quit_shows_fallback(self, temp_beets_library: Library):
+        items = list(temp_beets_library.items())
+        app = self._make_app(temp_beets_library, items)
+
+        with patch.object(app, "_set_terminal_title") as mock_set_title:
+            async with app.run_test() as pilot:
+                app.playback_widget.post_message(PlaybackStateChanged(playing=True))
+                await pilot.pause()
+                assert self._last_title(mock_set_title) != self.FALLBACK
+            assert self._last_title(mock_set_title) == self.FALLBACK
+
+    @pytest.mark.asyncio
+    async def test_control_characters_are_stripped(self, temp_beets_library: Library):
+        """Metadata must not be able to terminate or extend the escape sequence."""
+        items = list(temp_beets_library.items())
+        items[0].artist = "Art\x07ist"
+        items[0].title = "Ti\x1b]0;pwned\x07tle\x7f"
+        app = self._make_app(temp_beets_library, items)
+
+        with patch.object(app, "_set_terminal_title") as mock_set_title:
+            async with app.run_test() as pilot:
+                app.playback_widget.post_message(PlaybackStateChanged(playing=True))
+                await pilot.pause()
+                assert self._last_title(mock_set_title) == "Artist - Ti]0;pwnedtle"
+
+    @pytest.mark.asyncio
+    async def test_title_is_written_to_driver_as_osc_sequence(
+        self, temp_beets_library: Library
+    ):
+        items = list(temp_beets_library.items())
+        app = self._make_app(temp_beets_library, items)
+
+        async with app.run_test():
+            with patch.object(app._driver, "write") as mock_write:
+                app._set_terminal_title("Some Artist - Some Song")
+            mock_write.assert_called_once_with("\x1b]0;Some Artist - Some Song\x07")
+
+    def test_title_write_is_skipped_without_driver(self, temp_beets_library: Library):
+        items = list(temp_beets_library.items())
+        app = self._make_app(temp_beets_library, items)
+        assert app._driver is None
+        app._set_terminal_title("anything")  # must not raise

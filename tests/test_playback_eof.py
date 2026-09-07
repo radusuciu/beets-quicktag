@@ -103,7 +103,12 @@ class TestEofTransitionDetection:
             widget.player.active = False
             widget.player.playing = False
             widget._check_eof()
-            post.assert_called_once()
+            ended = [
+                call
+                for call in post.call_args_list
+                if isinstance(call.args[0], PlaybackEnded)
+            ]
+            assert len(ended) == 1
 
 
 class TestPlaybackGeneration:
