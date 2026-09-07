@@ -112,6 +112,7 @@ class QuickTagApp(App):
         autonext_at_track_end_enabled: bool,
         autosave_on_quit_enabled: bool,
         keep_playing_on_track_change_if_playing_enabled: bool,
+        keep_audio_device_awake_enabled: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -128,7 +129,9 @@ class QuickTagApp(App):
 
         self.current_item_index = 0
         self.item = items[0] if items else None
-        self.playback_widget = PlaybackWidget()
+        self.playback_widget = PlaybackWidget(
+            keep_audio_device_awake=keep_audio_device_awake_enabled
+        )
         self.header_widget = HeaderWidget(
             item=self.item, playback_widget=self.playback_widget
         )

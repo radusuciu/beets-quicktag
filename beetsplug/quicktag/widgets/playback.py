@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from just_playback import Playback
 from textual.app import ComposeResult
@@ -7,6 +8,10 @@ from textual.timer import Timer
 from textual.widget import Widget
 
 from .playback_progress import PlaybackProgressWidget
+
+# Half a second of 16-bit mono silence, looped at zero volume by the keep-alive
+# stream (see PlaybackWidget.keep_audio_device_awake).
+SILENCE_WAV: Path = Path(__file__).resolve().parent.parent / "silence.wav"
 
 
 class PlaybackEnded(Message):
@@ -44,8 +49,15 @@ class PlaybackWidget(Widget):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, keep_audio_device_awake: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
+        # Some audio servers (notably PulseAudio on WSLg) suspend the output
+        # device a few seconds after the last stream is paused, and the
+        # resume then stalls audibly. When enabled, a second muted stream
+        # loops silence for the widget's whole lifetime so the device never
+        # goes idle. Never touched by the track controls below.
+        self.keep_audio_device_awake: bool = keep_audio_device_awake
+        self.keep_alive: Playback | None = None
         self._current_path: str | None = None
         self._eof_check_timer: Timer | None = None
         # just_playback reports active=False and curr_pos=0 once a track has
@@ -89,6 +101,31 @@ class PlaybackWidget(Widget):
         # Start a timer to check for end-of-file conditions since
         # just_playback doesn't have property observation
         self._eof_check_timer = self.set_interval(0.5, self._check_eof)
+        if self.keep_audio_device_awake and self.player:
+            self._start_keep_alive()
+
+    def _start_keep_alive(self) -> None:
+        """Start the muted silence loop; on any failure, carry on without it."""
+        keep_alive: Playback | None = None
+        try:
+            keep_alive = Playback()
+            keep_alive.load_file(str(SILENCE_WAV))
+            keep_alive.set_volume(0)
+            keep_alive.loop_at_end(True)
+            keep_alive.play()
+        except Exception as e:
+            self.log.warning(f"just_playback: keep-alive stream not started: {e}")
+            if keep_alive is not None:
+                self._stop_keep_alive(keep_alive)
+            return
+        self.keep_alive = keep_alive
+        self.log.info("just_playback: keep-alive stream started.")
+
+    def _stop_keep_alive(self, keep_alive: Playback) -> None:
+        try:
+            keep_alive.stop()
+        except Exception as e:
+            self.log.error(f"just_playback: Error stopping keep-alive stream: {e}")
 
     async def on_unmount(self) -> None:
         await self._terminate_player()
@@ -114,6 +151,10 @@ class PlaybackWidget(Widget):
         if self._eof_check_timer:
             self._eof_check_timer.stop()
             self._eof_check_timer = None
+
+        if self.keep_alive:
+            self._stop_keep_alive(self.keep_alive)
+            self.keep_alive = None
 
         if self.player:
             try:
