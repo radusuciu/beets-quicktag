@@ -1,4 +1,5 @@
 from textual import events
+from textual.binding import Binding
 from textual.widgets import SelectionList
 
 
@@ -6,6 +7,16 @@ class CustomSelectionList(SelectionList):
     """
     A custom SelectionList that handles quick selection via alphanumeric key presses.
     """
+
+    # SelectionList inherits hidden "scroll_left"/"scroll_right" bindings for
+    # Left/Right from ScrollableContainer. They never scroll (OptionList has
+    # overflow-x hidden) and the key press falls through to the App, but the
+    # footer lists the focused widget's binding, so the App's Previous/Next
+    # entries were hidden. Rebinding here replaces the inherited entries.
+    BINDINGS = [
+        Binding("left", "app.previous_item", "Previous"),
+        Binding("right", "app.next_item", "Next"),
+    ]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
