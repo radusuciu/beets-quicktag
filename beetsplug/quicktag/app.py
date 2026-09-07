@@ -1,4 +1,5 @@
 from enum import Enum
+from pathlib import Path
 
 from beets.dbcore.db import Results as BeetsResults
 from beets.library import Item as BeetsItem
@@ -11,6 +12,9 @@ from textual.dom import NoMatches
 from textual.widgets import Footer, Input, Static
 from textual.widgets.selection_list import Selection
 
+from .definitions import CategoryDefinitions
+from .definitions_file import write_definitions_file
+from .item_values import read_item_values, write_item_values
 from .widgets.custom_selection_list import CustomSelectionList
 from .widgets.input_with_label import InputWithLabel
 from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidget
@@ -112,19 +116,21 @@ class QuickTagApp(App):
         self,
         lib: BeetsLibrary,
         items: BeetsResults,
-        categories: list[tuple[str, list[str]]],
+        definitions: CategoryDefinitions,
         autoplay_on_track_change_enabled: bool,
         autoplay_at_launch_enabled: bool,
         autonext_at_track_end_enabled: bool,
         autosave_on_quit_enabled: bool,
         keep_playing_on_track_change_if_playing_enabled: bool,
         keep_audio_device_awake_enabled: bool = False,
+        definitions_path: Path | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.lib = lib
         self.items = items
-        self.categories = categories
+        self.definitions = definitions
+        self.definitions_path = definitions_path
         self.autoplay_on_track_change_enabled = autoplay_on_track_change_enabled
         self.autoplay_at_launch_enabled = autoplay_at_launch_enabled
         self.autonext_at_track_end_enabled = autonext_at_track_end_enabled
@@ -183,14 +189,33 @@ class QuickTagApp(App):
             return
         driver.write(f"\x1b]0;{text}\x07")
 
+    def _selection_list(self, category: str) -> CustomSelectionList:
+        """The list widget for ``category``; raises ``NoMatches``."""
+        return self.query_one(f"#selection-{category}", CustomSelectionList)
+
+    def _persist_definitions(self) -> None:
+        """Write the definitions file if one is configured.
+
+        A failure is logged and the in-memory change is kept, so the next
+        successful write carries it.
+        """
+        if self.definitions_path is None:
+            return
+        try:
+            write_definitions_file(self.definitions_path, self.definitions)
+        except OSError as error:
+            self.log.error(
+                f"Could not write categories file {self.definitions_path}: {error}"
+            )
+
     def compose(self) -> ComposeResult:
         yield self.header_widget
 
         if self.item:
-            for category_name, options in self.categories:
+            for category_name in self.definitions.categories:
                 selection_options = [
-                    Selection(Content(option_text), option_idx)
-                    for option_idx, option_text in enumerate(options)
+                    Selection(Content(option_text), option_text)
+                    for option_text in self.definitions.options(category_name)
                 ]
                 category_selection_list = CustomSelectionList(
                     *selection_options, id=f"selection-{category_name}"
@@ -270,12 +295,9 @@ class QuickTagApp(App):
         await self._load_tags_for_current_item()
         self.log.info(f"Item set to: {item.artist} - {item.title}")
 
-        if self.categories:
-            first_category_name, _ = self.categories[0]
+        if self.definitions.categories:
             try:
-                self.query_one(
-                    f"#selection-{first_category_name}", CustomSelectionList
-                ).focus()
+                self._selection_list(self.definitions.categories[0]).focus()
             except NoMatches:
                 pass
 
@@ -451,11 +473,9 @@ class QuickTagApp(App):
             f"{self.item.artist} - {self.item.title}"
         )
         changed = False
-        for category_name, options_list in self.categories:
+        for category_name in self.definitions.categories:
             try:
-                selection_list = self.query_one(
-                    f"#selection-{category_name}", CustomSelectionList
-                )
+                selection_list = self._selection_list(category_name)
             except NoMatches:
                 self.log.error(
                     "Could not find SelectionList for category: "
@@ -463,31 +483,18 @@ class QuickTagApp(App):
                 )
                 continue
 
-            selected_indices_in_list = selection_list.selected
-            selected_values = [options_list[i] for i in selected_indices_in_list]
-
-            current_tag_value = ", ".join(selected_values) if selected_values else None
-            old_value = self.item.get(category_name)
-            self.log.debug(
-                f"Category {category_name} for '{self.item.title}': "
-                f"current_tag_value: '{current_tag_value}', "
-                f"old_value: '{old_value}'"
-            )
-
-            if current_tag_value:
-                if old_value != current_tag_value:
-                    self.log.info(
-                        f"Updating tag {category_name} from '{old_value}' to "
-                        f"'{current_tag_value}' for {self.item.title}"
-                    )
-                    self.item[category_name] = current_tag_value
-                    changed = True
-            elif old_value is not None:
+            selected = set(selection_list.selected)
+            # Definition order, not click order, so the stored string is stable.
+            selected_values = [
+                option
+                for option in self.definitions.options(category_name)
+                if option in selected
+            ]
+            if write_item_values(self.item, category_name, selected_values):
                 self.log.info(
-                    f"Removing tag {category_name} (was '{old_value}') "
+                    f"Updating {category_name} to {selected_values!r} "
                     f"for {self.item.title}"
                 )
-                del self.item[category_name]
                 changed = True
 
         # Save comments using InputWithLabel
@@ -539,11 +546,9 @@ class QuickTagApp(App):
         if not self.item:
             return
 
-        for category_name, options_list in self.categories:
+        for category_name in self.definitions.categories:
             try:
-                selection_list = self.query_one(
-                    f"#selection-{category_name}", CustomSelectionList
-                )
+                selection_list = self._selection_list(category_name)
             except NoMatches:
                 self.log.error(
                     "Could not find SelectionList for category: "
@@ -552,24 +557,13 @@ class QuickTagApp(App):
                 continue
 
             selection_list.deselect_all()
-
-            current_tag_string = self.item.get(category_name)
-            if not current_tag_string:
-                continue
-
-            tagged_values_for_category = {
-                val.strip() for val in current_tag_string.split(",")
-            }
-
-            newly_selected_indices_in_list = []
-            for i, option_text_in_list in enumerate(options_list):
-                if option_text_in_list in tagged_values_for_category:
-                    newly_selected_indices_in_list.append(i)
-
-            if newly_selected_indices_in_list:
-                for index_to_select in newly_selected_indices_in_list:
-                    selection_list.select(index_to_select)
-
+            known_options = set(self.definitions.options(category_name))
+            for value in read_item_values(self.item, category_name):
+                if value not in known_options:
+                    if not self._adopt_option(category_name, value):
+                        continue
+                    known_options.add(value)
+                selection_list.select(value)
             selection_list.scroll_to_highlight()
 
         # Load comments using InputWithLabel
@@ -583,3 +577,26 @@ class QuickTagApp(App):
             comments_widget.value = current_comments
         except NoMatches:
             self.log.error("Could not find comments input for loading.")
+
+    def _adopt_option(self, category_name: str, value: str) -> bool:
+        """Add a value found on a track but missing from the definitions.
+
+        Keeps the definitions a faithful mirror of the library so the value is
+        not silently dropped on the next save. Returns ``False`` when the model
+        refuses it (e.g. it differs from an existing option only by case).
+        """
+        try:
+            self.definitions.add_option(category_name, value)
+        except ValueError as error:
+            self.log.warning(
+                f"Not adopting {value!r} into category {category_name}: {error}"
+            )
+            return False
+        self._persist_definitions()
+        try:
+            self._selection_list(category_name).add_option(
+                Selection(Content(value), value)
+            )
+        except NoMatches:
+            pass
+        return True

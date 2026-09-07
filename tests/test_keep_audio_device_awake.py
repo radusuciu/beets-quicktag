@@ -19,6 +19,7 @@ from textual.app import App, ComposeResult
 
 from beetsplug.quicktag import QuickTagPlugin
 from beetsplug.quicktag.app import QuickTagApp
+from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.widgets.playback import SILENCE_WAV, PlaybackWidget
 from tests.conftest import make_fake_player
 
@@ -172,7 +173,7 @@ class TestAppPlumbing:
         return QuickTagApp(
             lib=lib,
             items=list(lib.items()),
-            categories=list(mock_config["categories"].items()),
+            definitions=CategoryDefinitions.from_config(mock_config["categories"]),
             autoplay_on_track_change_enabled=False,
             autoplay_at_launch_enabled=False,
             autonext_at_track_end_enabled=False,
