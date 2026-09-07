@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from enum import Enum
 
 from beets.dbcore.db import Results as BeetsResults
@@ -48,9 +49,14 @@ class HeaderWidget(Vertical):
     }
     """
 
-    def __init__(self, playback_widget: PlaybackWidget, item=None, **kwargs):
+    def __init__(
+        self,
+        playback_widget: PlaybackWidget,
+        item: BeetsItem | None = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
-        self.item: BeetsItem = item
+        self.item: BeetsItem | None = item
         # markup=False: titles and status messages are literal text, and
         # real-world metadata contains brackets (e.g. "Song [feat. X]").
         self._header_text_display = Static(id="header_text_content", markup=False)
@@ -111,7 +117,7 @@ class QuickTagApp(App):
     def __init__(
         self,
         lib: BeetsLibrary,
-        items: BeetsResults,
+        items: BeetsResults[BeetsItem] | Sequence[BeetsItem],
         categories: list[tuple[str, list[str]]],
         autoplay_on_track_change_enabled: bool,
         autoplay_at_launch_enabled: bool,
@@ -134,7 +140,7 @@ class QuickTagApp(App):
         )
 
         self.current_item_index = 0
-        self.item = items[0] if items else None
+        self.item: BeetsItem | None = items[0] if items else None
         self.playback_widget = PlaybackWidget(
             keep_audio_device_awake=keep_audio_device_awake_enabled
         )
@@ -148,9 +154,10 @@ class QuickTagApp(App):
         """Called when the app is mounted."""
         self.theme = "gruvbox"
         self._set_terminal_title(FALLBACK_TERMINAL_TITLE)
-        await self._set_item(
-            self.item, save_current_item_tags=False, is_initial_load=True
-        )
+        if self.item is not None:
+            await self._set_item(
+                self.item, save_current_item_tags=False, is_initial_load=True
+            )
         if self.autoplay_at_launch_enabled:
             self.playback_widget.play()
 
@@ -235,17 +242,16 @@ class QuickTagApp(App):
     async def _load_current_item_for_playback(self) -> None:
         """Load the current item for playback."""
 
-        item_path_bytes = self.item.path
+        if self.item is None:
+            return
 
         try:
-            item_path_str = item_path_bytes.decode("utf-8", "surrogateescape")
-        except AttributeError:
-            item_path_str = item_path_bytes
+            item_path = self.item.path.decode("utf-8", "surrogateescape")
         except Exception as e:
             self.log.error(f"Error decoding item path: {e}")
             return
 
-        self.playback_widget.load_track(item_path_str)
+        self.playback_widget.load_track(item_path)
 
     async def _set_item(
         self,
