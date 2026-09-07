@@ -20,6 +20,7 @@ class QuickTagPlugin(BeetsPlugin):
                 "autonext_at_track_end": False,
                 "autosave_on_quit": False,
                 "keep_playing_on_track_change_if_playing": True,
+                "keep_audio_device_awake": False,
             }
         )
 
@@ -50,6 +51,9 @@ class QuickTagPlugin(BeetsPlugin):
         keep_playing_on_track_change_if_playing_enabled = self.config[
             "keep_playing_on_track_change_if_playing"
         ].get(bool)
+        keep_audio_device_awake_enabled = self.config["keep_audio_device_awake"].get(
+            bool
+        )
 
         if not categories_config:
             ui.print_(
@@ -80,5 +84,6 @@ class QuickTagPlugin(BeetsPlugin):
             autonext_at_track_end_enabled,
             autosave_on_quit_enabled,
             keep_playing_on_track_change_if_playing_enabled,
+            keep_audio_device_awake_enabled=keep_audio_device_awake_enabled,
         )
         app.run()

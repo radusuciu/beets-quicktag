@@ -43,6 +43,7 @@ quicktag:
   autoplay_at_launch: yes
   autoplay_on_track_change: no
   autosave_on_quit: yes
+  keep_audio_device_awake: no
   categories:
     collection:
       - DJ
@@ -54,6 +55,16 @@ quicktag:
       - dark
       - angry
 ```
+
+### Choppy audio after pausing (WSLg)
+
+Some audio servers suspend the output device a few seconds after the last
+stream is paused, and waking it up again stalls playback for a moment. The
+PulseAudio RDP sink that WSL2 uses is one of them: pause for more than about
+five seconds with nothing else playing, and the first seconds after resuming
+are choppy. Set `keep_audio_device_awake: yes` to work around it. quicktag then
+keeps a muted, looping stream of silence open for as long as it runs, so the
+device never goes idle. Leave it off on systems that resume cleanly.
 
 ## Development
 
