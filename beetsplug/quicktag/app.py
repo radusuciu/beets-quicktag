@@ -87,14 +87,12 @@ class QuickTagApp(App):
         ("/", "play_pause_current_item", "Play/Pause"),
         ("<", "seek_backward(5)", "Seek -5s"),
         (">", "seek_forward(5)", "Seek +5s"),
-        # Hardware media keys, delivered by terminals that speak the kitty
-        # keyboard protocol (Windows Terminal, kitty, WezTerm, Alacritty,
-        # Ghostty). Priority so the comments input cannot swallow them, hidden
+        # Hardware media keys, as named by the kitty keyboard protocol. Hidden
         # because the footer would print the raw key names.
-        Binding("media_play_pause", "media_play_pause", show=False, priority=True),
-        Binding("media_stop", "pause_current_item", show=False, priority=True),
-        Binding("media_track_next", "next_item", show=False, priority=True),
-        Binding("media_track_previous", "previous_item", show=False, priority=True),
+        Binding("media_play_pause", "media_play_pause", show=False),
+        Binding("media_stop", "pause_current_item", show=False),
+        Binding("media_track_next", "next_item", show=False),
+        Binding("media_track_previous", "previous_item", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -384,9 +382,9 @@ class QuickTagApp(App):
     async def action_media_play_pause(self) -> None:
         """Play/pause from a hardware media key.
 
-        Separate from ``play_pause_current_item`` because ``check_action`` hides
-        that action while an Input has focus (its "/" key is typed into the
-        input), whereas media keys are never wanted by the input.
+        Separate from ``play_pause_current_item`` because ``check_action``
+        disables that one while an Input has focus, and media keys must keep
+        working there.
         """
         await self.action_play_pause_current_item()
 
