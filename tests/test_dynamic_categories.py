@@ -643,3 +643,42 @@ class TestEscape:
             await pilot.press("escape")
             await pilot.pause()
         assert not app.is_running
+
+
+class TestAddCategoryScrolling:
+    """With enough categories the screen scrolls; the input must come into view."""
+
+    MANY = {f"cat{i:02d}": ["a", "b", "c"] for i in range(12)}
+
+    @pytest.mark.asyncio
+    async def test_ctrl_n_scrolls_the_new_category_input_into_view(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, self.MANY)
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = app.screen
+            assert screen.max_scroll_y > 0, "test needs a screen that scrolls"
+            assert screen.scroll_y == 0
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            await pilot.pause()
+            new_input = app.query_one("#new-category-input", Input)
+            assert app.focused is new_input
+            assert screen.can_view_entire(new_input)
+
+    @pytest.mark.asyncio
+    async def test_plus_scrolls_the_option_input_of_the_last_panel_into_view(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, self.MANY)
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = app.screen
+            assert screen.max_scroll_y > 0, "test needs a screen that scrolls"
+            last = app.query_one("#panel-cat11", CategoryPanel)
+            last.selection_list.focus()
+            await pilot.pause()
+            await pilot.press("plus")
+            await pilot.pause()
+            await pilot.pause()
+            assert app.focused is last.input
+            assert screen.can_view_entire(last.input)

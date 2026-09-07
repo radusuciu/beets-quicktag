@@ -23,6 +23,19 @@ FALLBACK_TERMINAL_TITLE = "Beets QuickTag"
 
 CATEGORY_PLACEHOLDER = "New category name, Enter to add, Esc to cancel"
 
+
+class NewCategoryInput(Input):
+    """The ctrl+n input, hidden until it is needed.
+
+    Focusing it right after revealing it does not scroll it into view: it had
+    no layout region while hidden, and Textual's focus scroll is skipped for a
+    widget it cannot measure. Scroll once layout has shown it instead.
+    """
+
+    def on_show(self) -> None:
+        self.scroll_visible(animate=False, immediate=True)
+
+
 # Control characters (C0 plus DEL) in metadata could terminate or extend the
 # OSC escape sequence used to set the terminal title, so they are stripped.
 _CONTROL_CHARS = dict.fromkeys((*range(0x20), 0x7F))
@@ -230,7 +243,7 @@ class QuickTagApp(App):
                 yield CategoryPanel(
                     category_name, self.definitions.options(category_name)
                 )
-            new_category_input = Input(
+            new_category_input = NewCategoryInput(
                 id="new-category-input", placeholder=CATEGORY_PLACEHOLDER
             )
             new_category_input.display = False
