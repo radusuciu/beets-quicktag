@@ -41,7 +41,7 @@ jobs:
     
     - name: Test package installation
       run: |
-        uv run --isolated --no-project --with dist/*.whl python -c "import beetsplug.quicktag; print('Package installed successfully')"
+        uv run --isolated --no-project --with dist/*.whl python -P -c "import beetsplug.quicktag; print('Package installed successfully')"
     
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
@@ -62,6 +62,7 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git fetch origin main
+        git checkout -- CHANGELOG.md
         git checkout -B main origin/main
         uv run git-cliff --output CHANGELOG.md
         git add CHANGELOG.md
