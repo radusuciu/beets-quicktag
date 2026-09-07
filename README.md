@@ -1,9 +1,9 @@
 # Beets QuickTag Plugin
 
-[![CI](https://github.com/radu/beets-quicktag/workflows/CI/badge.svg)](https://github.com/radu/beets-quicktag/actions/workflows/ci.yml)
+[![CI](https://github.com/radusuciu/beets-quicktag/workflows/CI/badge.svg)](https://github.com/radusuciu/beets-quicktag/actions/workflows/ci.yml)
 [![PyPI version](https://badge.fury.io/py/beets-quicktag.svg)](https://badge.fury.io/py/beets-quicktag)
 [![Python versions](https://img.shields.io/pypi/pyversions/beets-quicktag.svg)](https://pypi.org/project/beets-quicktag/)
-[![codecov](https://codecov.io/gh/radu/beets-quicktag/branch/main/graph/badge.svg)](https://codecov.io/gh/radu/beets-quicktag)
+[![codecov](https://codecov.io/gh/radusuciu/beets-quicktag/branch/main/graph/badge.svg)](https://codecov.io/gh/radusuciu/beets-quicktag)
 
 This is a plugin for [beets](https://beets.io/) that scratches my own itch to categorize my music using custom tags, for DJing, as efficiently as possible. If it's not at a 1.0 release, it's probably not stable for use by others, though I'll still try and look at issues if for some reason you've found this (hi!).
 

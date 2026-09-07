@@ -157,7 +157,8 @@ class QuickTagApp(App):
     async def action_quit(self) -> None:
         """Action to quit the application."""
         self.log.info(
-            f"action_quit called. autosave_on_quit_enabled: {self.autosave_on_quit_enabled}"
+            "action_quit called. "
+            f"autosave_on_quit_enabled: {self.autosave_on_quit_enabled}"
         )
         if self.autosave_on_quit_enabled and self.item:
             self.log.info("Autosaving tags before quitting.")
@@ -207,19 +208,23 @@ class QuickTagApp(App):
         should_play = False
 
         if was_playing_before and self.keep_playing_on_track_change_if_playing_enabled:
-            # If we were playing before and the setting allows it, continue playing the new track
+            # If we were playing before and the setting allows it, continue
+            # playing the new track
             should_play = True
             self.log.info(
-                "Continuing playback with new track (was playing before and keep_playing_on_track_change_if_playing enabled)"
+                "Continuing playback with new track (was playing before and "
+                "keep_playing_on_track_change_if_playing enabled)"
             )
         elif self.autoplay_on_track_change_enabled:
             # If autoplay is enabled, start playing regardless of previous state
             should_play = True
             self.log.info("Starting playback due to autoplay_on_track_change setting")
         else:
-            # We were paused or keep_playing_on_track_change_if_playing is disabled, stay paused
+            # We were paused or keep_playing_on_track_change_if_playing is
+            # disabled, stay paused
             self.log.info(
-                "Keeping playback paused (was paused, autoplay disabled, or keep_playing_on_track_change_if_playing disabled)"
+                "Keeping playback paused (was paused, autoplay disabled, or "
+                "keep_playing_on_track_change_if_playing disabled)"
             )
 
         if should_play:
@@ -256,7 +261,11 @@ class QuickTagApp(App):
                 return
         else:
             # this should never happen...
-            error_message = f"Invalid direction: {direction}. Use {NavigateDirection.FORWARD} (NavigateDirection.FORWARD) or {NavigateDirection.BACKWARD} (NavigateDirection.BACKWARD)."
+            error_message = (
+                f"Invalid direction: {direction}. Use "
+                f"{NavigateDirection.FORWARD} (NavigateDirection.FORWARD) or "
+                f"{NavigateDirection.BACKWARD} (NavigateDirection.BACKWARD)."
+            )
             self.log.error(error_message)
             raise ValueError(error_message)
 
@@ -297,7 +306,8 @@ class QuickTagApp(App):
     async def on_playback_ended(self, message: PlaybackEnded) -> None:
         """Handles the PlaybackEnded message from PlaybackWidget."""
         self.log.info(
-            f"PlaybackEnded received. autonext_at_track_end: {self.autonext_at_track_end_enabled}"
+            "PlaybackEnded received. autonext_at_track_end: "
+            f"{self.autonext_at_track_end_enabled}"
         )
         if not self.autonext_at_track_end_enabled:
             # The player is already stopped at the start of the track; pressing
@@ -321,7 +331,8 @@ class QuickTagApp(App):
             return
 
         self.log.info(
-            f"_save_current_item_tags: Attempting to save tags for {self.item.artist} - {self.item.title}"
+            "_save_current_item_tags: Attempting to save tags for "
+            f"{self.item.artist} - {self.item.title}"
         )
         changed = False
         for category_name, options_list in self.categories:
@@ -331,7 +342,8 @@ class QuickTagApp(App):
                 )
             except NoMatches:
                 self.log.error(
-                    f"Could not find SelectionList for category: {category_name} during save."
+                    "Could not find SelectionList for category: "
+                    f"{category_name} during save."
                 )
                 continue
 
@@ -341,19 +353,23 @@ class QuickTagApp(App):
             current_tag_value = ", ".join(selected_values) if selected_values else None
             old_value = self.item.get(category_name)
             self.log.debug(
-                f"Category {category_name} for '{self.item.title}': current_tag_value: '{current_tag_value}', old_value: '{old_value}'"
+                f"Category {category_name} for '{self.item.title}': "
+                f"current_tag_value: '{current_tag_value}', "
+                f"old_value: '{old_value}'"
             )
 
             if current_tag_value:
                 if old_value != current_tag_value:
                     self.log.info(
-                        f"Updating tag {category_name} from '{old_value}' to '{current_tag_value}' for {self.item.title}"
+                        f"Updating tag {category_name} from '{old_value}' to "
+                        f"'{current_tag_value}' for {self.item.title}"
                     )
                     self.item[category_name] = current_tag_value
                     changed = True
             elif old_value is not None:
                 self.log.info(
-                    f"Removing tag {category_name} (was '{old_value}') for {self.item.title}"
+                    f"Removing tag {category_name} (was '{old_value}') "
+                    f"for {self.item.title}"
                 )
                 del self.item[category_name]
                 changed = True
@@ -370,7 +386,8 @@ class QuickTagApp(App):
 
             if old_comments != new_comments:
                 self.log.info(
-                    f"Updating comments from '{old_comments}' to '{new_comments}' for {self.item.title}"
+                    f"Updating comments from '{old_comments}' to "
+                    f"'{new_comments}' for {self.item.title}"
                 )
                 if new_comments:
                     self.item["comments"] = new_comments
@@ -382,7 +399,8 @@ class QuickTagApp(App):
 
         if changed:
             self.log.info(
-                f"Changes detected for '{self.item.artist} - {self.item.title}'. Storing item."
+                f"Changes detected for '{self.item.artist} - "
+                f"{self.item.title}'. Storing item."
             )
             try:
                 self.item.store()
@@ -395,7 +413,8 @@ class QuickTagApp(App):
                 )
         else:
             self.log.info(
-                f"No changes detected for '{self.item.artist} - {self.item.title}'. Nothing to store."
+                f"No changes detected for '{self.item.artist} - "
+                f"{self.item.title}'. Nothing to store."
             )
 
     async def _load_tags_for_current_item(self) -> None:
@@ -411,7 +430,8 @@ class QuickTagApp(App):
                 )
             except NoMatches:
                 self.log.error(
-                    f"Could not find SelectionList for category: {category_name} during load."
+                    "Could not find SelectionList for category: "
+                    f"{category_name} during load."
                 )
                 continue
 

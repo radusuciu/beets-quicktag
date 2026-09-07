@@ -52,7 +52,8 @@ class TestPlaybackWidgetBasicOperations:
     def test_widget_initialization(self, playback_widget):
         """Test PlaybackWidget initializes correctly."""
         widget = playback_widget
-        assert widget.player is not None
+        if widget.player is None:
+            pytest.skip("no audio device")
         assert widget._current_path is None
         assert widget._eof_check_timer is None
 
@@ -505,3 +506,29 @@ class TestPlaybackWidgetMockScenarios:
 
         # Should handle rapid changes without issues
         assert widget.player.play.call_count + widget.player.pause.call_count > 0
+
+
+class TestPlaybackWidgetWithoutAudioBackend:
+    """Bug 8: a failed ``Playback()`` must not break compose()."""
+
+    def test_progress_widget_is_built_even_when_player_init_fails(self) -> None:
+        """The progress child is needed by compose() whether or not audio works."""
+        with patch("beetsplug.quicktag.widgets.playback.Playback") as mock_playback:
+            mock_playback.side_effect = Exception("no audio device")
+            with patch.object(PlaybackWidget, "log", Mock()):
+                widget = PlaybackWidget()
+
+        assert widget.player is None
+        assert widget._playback_progress is not None
+        assert widget._playback_progress.player is None
+
+    @pytest.mark.asyncio
+    async def test_mounts_without_audio_backend(self) -> None:
+        """Mounting the widget must not raise when there is no player."""
+        with patch("beetsplug.quicktag.widgets.playback.Playback") as mock_playback:
+            mock_playback.side_effect = Exception("no audio device")
+            widget = PlaybackWidget()
+
+        app = _TestApp(widget)
+        async with app.run_test():
+            assert widget.is_mounted
