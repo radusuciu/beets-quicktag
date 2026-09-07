@@ -53,6 +53,7 @@ dev = [
 
 [tool.uv.sources]
 beets = { git = "https://github.com/beetbox/beets.git" }
+just-playback = { git = "https://github.com/radusuciu/just_playback.git", branch = "fix-device-probe-context-leak" }
 
 [tool.ruff]
 target-version = "py311"
