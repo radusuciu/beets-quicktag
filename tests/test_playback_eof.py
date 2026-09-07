@@ -144,6 +144,20 @@ class TestPlaybackGeneration:
         widget.load_track("/nonexistent/file.mp3")
         assert widget.playback_generation > start
 
+    def test_generation_advances_on_stop(self, widget: PlaybackWidget) -> None:
+        """An explicit stop() is a track change too.
+
+        An EOF already queued for the playback that was just stopped must be
+        dropped as stale, matching _handle_load_failure's behaviour.
+        """
+        widget.player.active = True
+        widget.player.playing = True
+        start = widget.playback_generation
+
+        widget.stop()
+
+        assert widget.playback_generation > start
+
 
 class TestProgressDisplayIsToldAboutEof:
     """Bug 13: the widget tells the progress display; the display never polls."""
