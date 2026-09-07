@@ -94,7 +94,7 @@ class CategoryDefinitions:
         """One warning per category that is a non-list fixed beets field."""
         return [
             f"quicktag: category '{name}' is a built-in beets field; its "
-            "values are stored in that field and 'beet write' will write "
+            "values are stored in that field and 'beet write' may write "
             "them to your files."
             for name in self._categories
             if self.is_fixed_field(name) and not self.is_list_field(name)

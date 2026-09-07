@@ -255,6 +255,8 @@ class TestFromConfig:
         assert len(warnings) == 1
         assert "album" in warnings[0]
         assert "built-in beets field" in warnings[0]
+        # "may": beets only writes tags for fields it considers changed.
+        assert "'beet write' may write them" in warnings[0]
 
     def test_allows_list_fixed_field_without_warning(self) -> None:
         if not CategoryDefinitions.is_list_field("genres"):

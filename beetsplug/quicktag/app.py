@@ -304,6 +304,10 @@ class QuickTagApp(App):
             new_category_input = self._new_category_input()
         except NoMatches:
             return
+        if new_category_input.display:
+            # Already open: re-opening would discard what has been typed.
+            new_category_input.focus()
+            return
         self._close_other_panel_inputs(except_panel=None)
         new_category_input.value = ""
         new_category_input.placeholder = CATEGORY_PLACEHOLDER
@@ -366,12 +370,26 @@ class QuickTagApp(App):
         if not new_category_input.display:
             return False
         self._close_new_category_input()
+        self._focus_after_closing_category_input()
+        return True
+
+    def _focus_after_closing_category_input(self) -> None:
+        """Hiding the input drops focus, so hand it to the first list.
+
+        With no categories yet there is no list, and the comments field is
+        the only other place focus can sensibly go.
+        """
         if self.definitions.categories:
             try:
                 self._selection_list(self.definitions.categories[0]).focus()
+                return
             except NoMatches:
                 pass
-        return True
+        try:
+            comments = self.query_one("#comments-input", InputWithLabel)
+        except NoMatches:
+            return
+        comments.query_one(Input).focus()
 
     async def _load_current_item_for_playback(self) -> None:
         """Load the current item for playback."""

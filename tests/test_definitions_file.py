@@ -42,6 +42,15 @@ class TestReadWrite:
         write_definitions_file(path, CategoryDefinitions.from_config({"m": ["b"]}))
         assert read_definitions_file(path).options("m") == ["b"]
 
+    def test_write_keeps_the_existing_file_mode(self, tmp_path: Path) -> None:
+        """The temp file is 0600; replacing a hand-created file must not
+        silently tighten its permissions."""
+        path = tmp_path / "quicktag_categories.yaml"
+        path.write_text("m: [a]\n", encoding="utf-8")
+        path.chmod(0o644)
+        write_definitions_file(path, CategoryDefinitions.from_config({"m": ["b"]}))
+        assert path.stat().st_mode & 0o777 == 0o644
+
     def test_write_failure_raises_oserror(self, tmp_path: Path) -> None:
         missing_dir = tmp_path / "nope" / "quicktag_categories.yaml"
         with pytest.raises(OSError):

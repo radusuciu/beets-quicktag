@@ -10,6 +10,7 @@ file behind.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -63,6 +64,10 @@ def write_definitions_file(path: Path, definitions: CategoryDefinitions) -> None
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
+        if path.exists():
+            # mkstemp creates the file 0600; replacing a hand-created file
+            # would otherwise silently tighten its permissions.
+            shutil.copymode(path, temp_name)
         os.replace(temp_name, path)
     except BaseException:
         try:

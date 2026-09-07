@@ -505,6 +505,18 @@ class TestAddCategoryFlow:
             assert app.query_one(InputWithLabel).value == "hi"
 
     @pytest.mark.asyncio
+    async def test_ctrl_n_while_already_open_keeps_the_typed_text(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "ctrl+n")
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is True
+            assert new_input.value == "v"
+            assert app.focused is new_input
+
+    @pytest.mark.asyncio
     async def test_ctrl_n_works_with_no_categories_at_all(
         self, temp_beets_library: Library
     ) -> None:
@@ -596,6 +608,20 @@ class TestEscape:
             assert new_input.value == ""
             assert app.focused is app.query_one("#selection-mood")
             assert app.definitions.categories == ["mood"]
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_escape_with_no_categories_focuses_the_comments_field(
+        self, temp_beets_library: Library
+    ) -> None:
+        """There is no list to fall back to, and focus must not be lost."""
+        app = make_app(temp_beets_library, {})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "escape")
+            assert app.query_one("#new-category-input", Input).display is False
+            assert app.focused is app.query_one(
+                "#comments-input", InputWithLabel
+            ).query_one(Input)
             assert app.is_running
 
     @pytest.mark.asyncio
