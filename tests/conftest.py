@@ -184,8 +184,14 @@ def mp3_files(temp_dir: Path) -> dict[str, Path]:
 
 
 @pytest.fixture
-def temp_beets_library(temp_dir: Path, mp3_files: dict[str, Path]) -> Library:
-    """Create a temporary beets library with test MP3 files."""
+def temp_beets_library(
+    temp_dir: Path, mp3_files: dict[str, Path]
+) -> Generator[Library, None, None]:
+    """Create a temporary beets library with test MP3 files.
+
+    The library is closed on teardown so its sqlite file can be deleted along
+    with ``temp_dir``; Windows refuses to remove a file that is still open.
+    """
     library_db = temp_dir / "test_library.db"
     music_dir = temp_dir / "music"
     music_dir.mkdir()
@@ -218,7 +224,8 @@ def temp_beets_library(temp_dir: Path, mp3_files: dict[str, Path]) -> Library:
         except Exception as e:
             print(f"Warning: Could not add {name} to beets library: {e}")
 
-    return lib
+    yield lib
+    lib._close()
 
 
 @pytest.fixture
