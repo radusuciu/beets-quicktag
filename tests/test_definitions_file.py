@@ -48,8 +48,11 @@ class TestReadWrite:
         path = tmp_path / "quicktag_categories.yaml"
         path.write_text("m: [a]\n", encoding="utf-8")
         path.chmod(0o644)
+        # Windows only honours the read-only bit, so it reports 0o666 here;
+        # compare against what the OS actually stored rather than 0o644.
+        mode_before = path.stat().st_mode & 0o777
         write_definitions_file(path, CategoryDefinitions.from_config({"m": ["b"]}))
-        assert path.stat().st_mode & 0o777 == 0o644
+        assert path.stat().st_mode & 0o777 == mode_before
 
     def test_write_failure_raises_oserror(self, tmp_path: Path) -> None:
         missing_dir = tmp_path / "nope" / "quicktag_categories.yaml"
