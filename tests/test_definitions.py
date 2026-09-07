@@ -351,3 +351,93 @@ class TestFromConfig:
         # dict keys are case-sensitive, so YAML can hand us both.
         with pytest.raises(ValueError, match="already exists"):
             CategoryDefinitions.from_config({"mood": ["a"], "Mood": ["b"]})
+
+
+class TestRenameChecks:
+    """Validation the app runs before a library migration, without mutating."""
+
+    @pytest.fixture
+    def defs(self) -> CategoryDefinitions:
+        return CategoryDefinitions.from_config(
+            {"mood": ["Hiphop", "Hip-Hop", "House"], "vibe": ["afro"]}
+        )
+
+    def test_check_option_rename_returns_trimmed_value(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.check_option_rename("mood", "House", "  Deep House ") == (
+            "Deep House"
+        )
+        assert defs.options("mood") == ["Hiphop", "Hip-Hop", "House"]
+
+    @pytest.mark.parametrize("new", ["", "   ", "a,b"])
+    def test_check_option_rename_rejects_bad_shape(
+        self, defs: CategoryDefinitions, new: str
+    ) -> None:
+        with pytest.raises(ValueError, match="cannot"):
+            defs.check_option_rename("mood", "House", new)
+
+    def test_check_option_rename_requires_existing_option(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        with pytest.raises(ValueError, match="has no option 'Nope'"):
+            defs.check_option_rename("mood", "Nope", "x")
+
+    def test_check_option_rename_requires_existing_category(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        with pytest.raises(ValueError, match="No category named 'zzz'"):
+            defs.check_option_rename("zzz", "House", "x")
+
+    def test_merge_target_is_none_for_a_fresh_name(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.merge_target("mood", "House", "Techno") is None
+
+    def test_merge_target_is_none_for_a_case_only_rename_of_itself(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.merge_target("mood", "House", "HOUSE") is None
+
+    def test_merge_target_returns_the_stored_spelling(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.merge_target("mood", "Hiphop", "hip-hop") == "Hip-Hop"
+
+    def test_check_category_rename_returns_trimmed_name(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.check_category_rename("mood", " feel ") == "feel"
+        assert defs.categories == ["mood", "vibe"]
+
+    def test_check_category_rename_allows_case_only_change(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.check_category_rename("mood", "Mood") == "Mood"
+
+    def test_check_category_rename_rejects_duplicate(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        with pytest.raises(ValueError, match="already exists"):
+            defs.check_category_rename("mood", "VIBE")
+
+    def test_check_category_rename_rejects_fixed_text_field(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        with pytest.raises(ValueError, match="built-in beets field"):
+            defs.check_category_rename("mood", "album")
+
+    @pytest.mark.skipif(
+        not CategoryDefinitions.is_list_field("genres"),
+        reason="installed beets has no list-valued 'genres' field",
+    )
+    def test_check_category_rename_allows_list_valued_fixed_field(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.check_category_rename("mood", "genres") == "genres"
+
+    def test_check_category_rename_requires_existing_category(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        with pytest.raises(ValueError, match="No category named 'zzz'"):
+            defs.check_category_rename("zzz", "x")

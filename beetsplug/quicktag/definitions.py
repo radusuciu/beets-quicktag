@@ -203,6 +203,36 @@ class CategoryDefinitions:
         options = self._require_category(category)
         del options[self._require_option(category, options, value)]
 
+    # ---- rename checks (no mutation; the app validates before migrating) ---
+
+    def check_option_rename(self, category: str, old: str, new: str) -> str:
+        """Validate renaming ``old`` to ``new`` and return the normalized ``new``.
+
+        Renaming onto another existing option is allowed here because it is a
+        merge; see :meth:`merge_target`. Raises ``ValueError`` like the
+        mutating methods do, but changes nothing.
+        """
+        options = self._require_category(category)
+        self._require_option(category, options, old)
+        return self._validate_option_shape(new)
+
+    def merge_target(self, category: str, old: str, new: str) -> str | None:
+        """The stored spelling of the option ``new`` would merge into, or None.
+
+        A case-only rename of ``old`` itself is not a merge.
+        """
+        options = self._require_category(category)
+        index = self._require_option(category, options, old)
+        target = self._find_case_insensitive(options, new.strip())
+        if target is None or target == index:
+            return None
+        return options[target]
+
+    def check_category_rename(self, old: str, new: str) -> str:
+        """Validate renaming category ``old`` to ``new``; return normalized ``new``."""
+        self._require_category(old)
+        return self._validate_new_name(new, current=old, loaded=False)
+
     # ---- helpers ------------------------------------------------------------
 
     def _require_category(self, category: str) -> list[str]:
