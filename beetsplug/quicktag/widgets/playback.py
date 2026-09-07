@@ -1,3 +1,5 @@
+import os
+
 from just_playback import Playback
 from textual.app import ComposeResult
 from textual.message import Message
@@ -8,9 +10,17 @@ from .playback_progress import PlaybackProgressWidget
 
 
 class PlaybackEnded(Message):
-    """Posted when playback finishes (EOF)."""
+    """Posted when playback finishes (EOF).
 
-    pass
+    `generation` identifies the playback that ended. EOF is only noticed on the
+    next poll, so by the time the app handles this message the user may already
+    have changed track or restarted the current one; comparing generations lets
+    the handler drop such stale messages.
+    """
+
+    def __init__(self, generation: int) -> None:
+        super().__init__()
+        self.generation = generation
 
 
 class PlaybackWidget(Widget):
@@ -30,6 +40,10 @@ class PlaybackWidget(Widget):
         # transition: we were playing, and now the player is inactive without
         # us having stopped, paused, or reloaded it.
         self._was_playing: bool = False
+        # Bumped on every successful load and every start/resume, so a
+        # PlaybackEnded posted for an earlier playback can be recognised as
+        # stale. See PlaybackEnded.
+        self._playback_generation: int = 0
 
         self.player: Playback | None
         try:
@@ -42,6 +56,11 @@ class PlaybackWidget(Widget):
         # Built unconditionally: compose() yields it even when there is no
         # player, and the progress widget tolerates player=None.
         self._playback_progress = PlaybackProgressWidget(player=self.player)
+
+    @property
+    def playback_generation(self) -> int:
+        """Identifier of the current playback, for stale-message detection."""
+        return self._playback_generation
 
     async def on_mount(self) -> None:
         # Start a timer to check for end-of-file conditions since
@@ -62,7 +81,8 @@ class PlaybackWidget(Widget):
         if self._was_playing and not self.player.active:
             self._was_playing = False
             self.log.info(f"just_playback: End of file - {self._current_path}")
-            self.post_message(PlaybackEnded())
+            self._playback_progress.mark_ended()
+            self.post_message(PlaybackEnded(self._playback_generation))
         else:
             self._was_playing = bool(self.player.playing)
 
@@ -95,14 +115,52 @@ class PlaybackWidget(Widget):
         if self._current_path != new_path:
             self._was_playing = False
             try:
+                # load_file() raises before it tears down the current stream, so
+                # check first: otherwise a missing file leaves the previous
+                # track playing with no loaded path to stop it.
+                if not os.path.exists(new_path):
+                    raise FileNotFoundError(f"Audio file not found: {new_path}")
                 self.player.load_file(new_path)
-                self._current_path = new_path
-                self.log.info(f"just_playback: Loaded track {new_path}")
             except Exception as e:
-                self.log.error(f"just_playback: Error loading track {new_path}: {e}")
-                self._current_path = None
+                self._handle_load_failure(new_path, e)
+                return
+            self._current_path = new_path
+            self._playback_generation += 1
+            self._playback_progress.clear_ended()
+            self.log.info(f"just_playback: Loaded track {new_path}")
         else:
             self.log.info(f"just_playback: Track {new_path} already loaded.")
+
+    def _handle_load_failure(self, new_path: str, error: Exception) -> None:
+        """Silence whatever is still playing and tell the user why."""
+        self.log.error(f"just_playback: Error loading track {new_path}: {error}")
+
+        if self.player:
+            try:
+                self.player.stop()
+            except Exception as stop_error:
+                self.log.error(
+                    f"just_playback: Error stopping playback after a failed "
+                    f"load of {new_path}: {stop_error}"
+                )
+
+        self._current_path = None
+        self._was_playing = False
+        # A failed load is still a track change: bump the generation so an EOF
+        # posted for the track that was playing until now is dropped as stale
+        # instead of advancing a second time.
+        self._playback_generation += 1
+
+        try:
+            self.notify(
+                f"Cannot load audio: {new_path}",
+                title="Playback",
+                severity="error",
+            )
+        except Exception:
+            # notify() needs an active app; unmounted widgets have nowhere to
+            # show the message, and the error is already logged.
+            pass
 
     def play(self) -> None:
         """Starts or resumes playback of the currently loaded track."""
@@ -116,12 +174,14 @@ class PlaybackWidget(Widget):
         try:
             if self.player.paused:
                 self.player.resume()
+                self._playback_generation += 1
                 self.log.info(
                     f"just_playback: Resumed play for {self._current_path} "
                     "via play() method."
                 )
             elif not self.player.playing:
                 self.player.play()
+                self._playback_generation += 1
                 self.log.info(
                     f"just_playback: Started play for {self._current_path} "
                     "via play() method."
@@ -134,6 +194,7 @@ class PlaybackWidget(Widget):
             # Arm end-of-track detection now, so a track shorter than the poll
             # interval is still noticed by _check_eof.
             self._was_playing = True
+            self._playback_progress.clear_ended()
         except Exception as e:
             self.log.error(
                 f"just_playback: Error during play for {self._current_path}: {e}"
@@ -183,6 +244,12 @@ class PlaybackWidget(Widget):
 
         self._was_playing = False
         self._current_path = None
+        # A stop is a track change too: bump the generation so a stale EOF
+        # posted for the playback we just stopped is dropped, and clear the
+        # progress display's ended marker for consistency with
+        # _handle_load_failure.
+        self._playback_generation += 1
+        self._playback_progress.clear_ended()
 
     def seek_relative(self, seconds: int) -> None:
         if (

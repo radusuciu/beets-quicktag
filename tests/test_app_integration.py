@@ -504,7 +504,9 @@ class TestQuickTagAppPlaybackEndedHandling:
             ) as mock_navigate,
             patch.object(app.playback_widget, "play") as mock_play,
         ):
-            await app.on_playback_ended(PlaybackEnded())
+            await app.on_playback_ended(
+                PlaybackEnded(app.playback_widget.playback_generation)
+            )
 
             mock_navigate.assert_called_once_with(NavigateDirection.FORWARD)
             # Auto-advance keeps listening, regardless of autoplay_on_track_change
@@ -534,7 +536,9 @@ class TestQuickTagAppPlaybackEndedHandling:
             patch.object(app, "_navigate", new_callable=AsyncMock) as mock_navigate,
             patch.object(app.playback_widget, "play") as mock_play,
         ):
-            await app.on_playback_ended(PlaybackEnded())
+            await app.on_playback_ended(
+                PlaybackEnded(app.playback_widget.playback_generation)
+            )
 
             # The player is already stopped at the start of the track; nothing to do
             mock_navigate.assert_not_called()
@@ -567,7 +571,9 @@ class TestQuickTagAppPlaybackEndedHandling:
             ) as mock_navigate,
             patch.object(app.playback_widget, "play") as mock_play,
         ):
-            await app.on_playback_ended(PlaybackEnded())
+            await app.on_playback_ended(
+                PlaybackEnded(app.playback_widget.playback_generation)
+            )
 
             # _navigate handles the end of the list (saving and reporting);
             # nothing to advance to, so playback must not restart
@@ -599,7 +605,9 @@ class TestQuickTagAppPlaybackEndedHandling:
             app.item = items[-1]
 
             with patch.object(app.playback_widget, "play") as mock_play:
-                await app.on_playback_ended(PlaybackEnded())
+                await app.on_playback_ended(
+                    PlaybackEnded(app.playback_widget.playback_generation)
+                )
 
             assert app.current_item_index == len(items) - 1
             assert "All items processed" in header_text(app)

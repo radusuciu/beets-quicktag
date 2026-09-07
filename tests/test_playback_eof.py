@@ -106,6 +106,85 @@ class TestEofTransitionDetection:
             post.assert_called_once()
 
 
+class TestPlaybackGeneration:
+    """Bug 7: an EOF message must say which playback it belongs to."""
+
+    def test_check_eof_posts_the_current_generation(self, widget: PlaybackWidget):
+        widget.player.active = True
+        widget.player.playing = True
+        with patch.object(widget, "post_message") as post:
+            widget._check_eof()  # observes playing
+            widget.player.active = False
+            widget.player.playing = False
+            widget._check_eof()
+
+        message = post.call_args.args[0]
+        assert message.generation == widget.playback_generation
+
+    def test_generation_advances_on_load_and_on_play(
+        self, widget: PlaybackWidget, mp3_files: dict[str, Path]
+    ):
+        start = widget.playback_generation
+
+        widget.load_track(str(mp3_files["short"]))
+        after_load = widget.playback_generation
+        assert after_load > start
+
+        widget.play()
+        assert widget.playback_generation > after_load
+
+    def test_generation_advances_on_a_failed_load(self, widget: PlaybackWidget):
+        """A failed load is a track change too.
+
+        The user asked for a different track; whatever was playing until now is
+        over, so an EOF already queued for it must be dropped rather than
+        advancing the app a second time.
+        """
+        start = widget.playback_generation
+        widget.load_track("/nonexistent/file.mp3")
+        assert widget.playback_generation > start
+
+    def test_generation_advances_on_stop(self, widget: PlaybackWidget) -> None:
+        """An explicit stop() is a track change too.
+
+        An EOF already queued for the playback that was just stopped must be
+        dropped as stale, matching _handle_load_failure's behaviour.
+        """
+        widget.player.active = True
+        widget.player.playing = True
+        start = widget.playback_generation
+
+        widget.stop()
+
+        assert widget.playback_generation > start
+
+
+class TestProgressDisplayIsToldAboutEof:
+    """Bug 13: the widget tells the progress display; the display never polls."""
+
+    def test_eof_marks_the_progress_display_as_ended(self, widget: PlaybackWidget):
+        widget.player.active = True
+        widget.player.playing = True
+        with patch.object(widget._playback_progress, "mark_ended") as mark_ended:
+            widget._check_eof()  # observes playing
+            mark_ended.assert_not_called()
+
+            widget.player.active = False
+            widget.player.playing = False
+            widget._check_eof()
+            mark_ended.assert_called_once()
+
+    def test_load_and_play_clear_the_ended_marker(
+        self, widget: PlaybackWidget, mp3_files: dict[str, Path]
+    ):
+        with patch.object(widget._playback_progress, "clear_ended") as clear_ended:
+            widget.load_track(str(mp3_files["short"]))
+            assert clear_ended.call_count == 1
+
+            widget.play()
+            assert clear_ended.call_count == 2
+
+
 class _WidgetApp(App):
     def __init__(self, widget: PlaybackWidget) -> None:
         super().__init__()
@@ -162,7 +241,7 @@ class TestAppHandlesPlaybackEnded:
             patch.object(app, "_navigate", new_callable=AsyncMock) as navigate,
             patch.object(app.playback_widget, "play") as play,
         ):
-            await handler(PlaybackEnded())
+            await handler(PlaybackEnded(app.playback_widget.playback_generation))
             navigate.assert_called_once()
             play.assert_called_once()
 
@@ -175,7 +254,7 @@ class TestAppHandlesPlaybackEnded:
         handler = getattr(app, PlaybackEnded.handler_name)
 
         with patch.object(app, "_navigate", new_callable=AsyncMock) as navigate:
-            await handler(PlaybackEnded())
+            await handler(PlaybackEnded(app.playback_widget.playback_generation))
             navigate.assert_not_called()
 
     @pytest.mark.asyncio
@@ -191,10 +270,29 @@ class TestAppHandlesPlaybackEnded:
             ) as navigate,
             patch.object(app.playback_widget, "play") as play,
         ):
-            await handler(PlaybackEnded())
+            await handler(PlaybackEnded(app.playback_widget.playback_generation))
             # _navigate reports the end of the list; playback must not restart
             navigate.assert_called_once_with(NavigateDirection.FORWARD)
             play.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stale_generation_is_ignored(self, temp_beets_library: Library):
+        """Right or `/` pressed inside the 0.5 s poll window must win."""
+        items = list(temp_beets_library.items())
+        app = _make_app(temp_beets_library, items, autonext_at_track_end_enabled=True)
+        handler = getattr(app, PlaybackEnded.handler_name)
+        generation = app.playback_widget.playback_generation
+
+        with (
+            patch.object(app, "_navigate", new_callable=AsyncMock) as navigate,
+            patch.object(app.playback_widget, "play") as play,
+        ):
+            await handler(PlaybackEnded(generation - 1))
+            navigate.assert_not_called()
+            play.assert_not_called()
+
+            await handler(PlaybackEnded(generation))
+            navigate.assert_called_once_with(NavigateDirection.FORWARD)
 
 
 class TestEndToEnd:
