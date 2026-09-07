@@ -754,6 +754,7 @@ class TestQuickTagAppErrorHandling:
 class TestQuickTagAppRealPlaybackIntegration:
     """Integration tests with real playback using generated MP3 files."""
 
+    @pytest.mark.real_audio
     @pytest.mark.asyncio
     async def test_full_playback_lifecycle(
         self, temp_beets_library: Library, mp3_files: dict[str, Path]
@@ -1017,6 +1018,7 @@ class TestTerminalTitle:
                 await pilot.pause()
                 assert self._last_title(mock_set_title) == self.FALLBACK
 
+    @pytest.mark.real_audio
     @pytest.mark.asyncio
     async def test_navigating_while_playing_shows_new_item(
         self, temp_beets_library: Library

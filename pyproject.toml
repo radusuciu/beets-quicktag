@@ -88,6 +88,7 @@ addopts = "-v --tb=short"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "real_audio: opens a real just_playback device (deselect with '-m \"not real_audio\"')",
 ]
 
 [tool.coverage.run]

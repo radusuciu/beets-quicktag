@@ -9,8 +9,6 @@ Covers:
 - Resource cleanup
 """
 
-import os
-from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -58,8 +56,6 @@ class TestPlaybackWidgetBasicOperations:
     def test_widget_initialization(self, playback_widget):
         """Test PlaybackWidget initializes correctly."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("no audio device")
         assert widget._current_path is None
         assert widget._eof_check_timer is None
 
@@ -71,11 +67,12 @@ class TestPlaybackWidgetBasicOperations:
                 widget = PlaybackWidget()
                 assert widget.player is None
 
+    @pytest.mark.real_audio
     def test_load_track_valid_file(self, playback_widget, mp3_files: dict[str, Path]):
-        """Test loading a valid MP3 file."""
+        """Test loading a valid MP3 file into the real backend."""
         widget = playback_widget
         if widget.player is None:
-            pytest.skip("just_playback not available")
+            pytest.skip("no audio device")
 
         file_path = str(mp3_files["short"])
         widget.load_track(file_path)
@@ -84,9 +81,6 @@ class TestPlaybackWidgetBasicOperations:
     def test_load_track_nonexistent_file(self, playback_widget, nonexistent_file: Path):
         """Test loading a non-existent file handles error gracefully."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("just_playback not available")
-
         # Should not raise exception
         widget.load_track(str(nonexistent_file))
         # Path should not be set if load failed
@@ -95,26 +89,21 @@ class TestPlaybackWidgetBasicOperations:
     def test_load_track_none_path(self, playback_widget):
         """Test loading with None path."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("just_playback not available")
-
         widget.load_track(None)
         assert widget._current_path is None
 
     def test_load_track_empty_path(self, playback_widget):
         """Test loading with empty path."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("just_playback not available")
-
         widget.load_track("")
         assert widget._current_path is None
 
+    @pytest.mark.real_audio
     def test_load_track_unicode_path(self, playback_widget, unicode_filename: Path):
-        """Test loading file with unicode characters in path."""
+        """The real backend must accept unicode characters in the path."""
         widget = playback_widget
         if widget.player is None:
-            pytest.skip("just_playback not available")
+            pytest.skip("no audio device")
 
         file_path = str(unicode_filename)
         widget.load_track(file_path)
@@ -124,9 +113,6 @@ class TestPlaybackWidgetBasicOperations:
     def test_load_same_track_twice(self, playback_widget, mp3_files: dict[str, Path]):
         """Test loading the same track twice doesn't reload."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("just_playback not available")
-
         file_path = str(mp3_files["short"])
         widget.load_track(file_path)
 
@@ -138,9 +124,6 @@ class TestPlaybackWidgetBasicOperations:
     def test_play_without_loaded_track(self, playback_widget):
         """Test play() when no track is loaded."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("just_playback not available")
-
         # Should not raise exception
         widget.play()
 
@@ -163,9 +146,6 @@ class TestPlaybackWidgetBasicOperations:
     def test_play_pause_toggle(self, playback_widget, mp3_files: dict[str, Path]):
         """Test play_pause() toggles between play and pause."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("just_playback not available")
-
         file_path = str(mp3_files["short"])
         widget.load_track(file_path)
 
@@ -182,9 +162,6 @@ class TestPlaybackWidgetBasicOperations:
     def test_stop_functionality(self, playback_widget, mp3_files: dict[str, Path]):
         """Test stop() functionality."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("just_playback not available")
-
         file_path = str(mp3_files["short"])
         widget.load_track(file_path)
 
@@ -201,11 +178,9 @@ class TestPlaybackWidgetSeekOperations:
         """Test seeking forward in track."""
         widget = playback_widget
 
-        # Mock the entire player for predictable behavior
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.duration = 30.0
         mock_player.curr_pos = 10.0
-        widget.player = mock_player
 
         widget.seek_relative(5)
         mock_player.seek.assert_called_once_with(15.0)
@@ -214,11 +189,9 @@ class TestPlaybackWidgetSeekOperations:
         """Test seeking backward in track."""
         widget = playback_widget
 
-        # Mock the entire player for predictable behavior
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.duration = 30.0
         mock_player.curr_pos = 10.0
-        widget.player = mock_player
 
         widget.seek_relative(-5)
         mock_player.seek.assert_called_once_with(5.0)
@@ -227,11 +200,9 @@ class TestPlaybackWidgetSeekOperations:
         """Test seeking beyond track boundaries."""
         widget = playback_widget
 
-        # Mock the entire player for predictable behavior
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.duration = 5.0
         mock_player.curr_pos = 2.0
-        widget.player = mock_player
 
         # Seek beyond end
         widget.seek_relative(10)
@@ -256,9 +227,8 @@ class TestPlaybackWidgetSeekOperations:
         widget = playback_widget
 
         # Mock player without duration
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.duration = None
-        widget.player = mock_player
 
         widget.seek_relative(5)
         mock_player.seek.assert_not_called()
@@ -271,12 +241,11 @@ class TestPlaybackWidgetEOFDetection:
         """EOF is the transition from playing to inactive (curr_pos is 0 then)."""
         widget = playback_widget
 
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.duration = 5.0
         mock_player.curr_pos = 2.0
         mock_player.active = True
         mock_player.playing = True
-        widget.player = mock_player
         widget._current_path = "test.mp3"
 
         with patch.object(widget, "post_message") as mock_post:
@@ -295,12 +264,11 @@ class TestPlaybackWidgetEOFDetection:
         """An inactive player that was never observed playing is not EOF."""
         widget = playback_widget
 
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.duration = 5.0
         mock_player.curr_pos = 0.0
         mock_player.active = False
         mock_player.playing = False
-        widget.player = mock_player
         widget._current_path = "test.mp3"
 
         with patch.object(widget, "post_message") as mock_post:
@@ -312,11 +280,10 @@ class TestPlaybackWidgetEOFDetection:
         widget = playback_widget
 
         # Mock player state - still active
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.duration = 5.0
         mock_player.curr_pos = 4.6  # Near end
         mock_player.active = True  # Still active
-        widget.player = mock_player
         widget._current_path = "test.mp3"
 
         with patch.object(widget, "post_message") as mock_post:
@@ -328,11 +295,10 @@ class TestPlaybackWidgetEOFDetection:
         widget = playback_widget
 
         # Mock player state - no current path
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.duration = 5.0
         mock_player.curr_pos = 4.6
         mock_player.active = False
-        widget.player = mock_player
         widget._current_path = None
 
         with patch.object(widget, "post_message") as mock_post:
@@ -343,10 +309,9 @@ class TestPlaybackWidgetEOFDetection:
         """Repeated polls after the end must not post again."""
         widget = playback_widget
 
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.active = True
         mock_player.playing = True
-        widget.player = mock_player
         widget._current_path = "test.mp3"
 
         with patch.object(widget, "post_message") as mock_post:
@@ -362,17 +327,19 @@ class TestPlaybackWidgetEOFDetection:
         """A file that ends before the first poll is still detected: play() arms it."""
         widget = playback_widget
 
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.duration = 0.3
         mock_player.paused = False
         mock_player.playing = False
         mock_player.active = False
-        widget.player = mock_player
         widget._current_path = "test.mp3"
 
         with patch.object(widget, "post_message") as mock_post:
             widget.play()
-            widget._check_eof()  # player already inactive again
+            # The stream ends before the first poll.
+            mock_player.playing = False
+            mock_player.active = False
+            widget._check_eof()
             ended = [
                 call
                 for call in mock_post.call_args_list
@@ -389,9 +356,8 @@ class TestPlaybackWidgetStateManagement:
         widget = playback_widget
 
         # Mock playing state
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.playing = True
-        widget.player = mock_player
         assert widget.is_playing() is True
 
         mock_player.playing = False
@@ -408,9 +374,8 @@ class TestPlaybackWidgetStateManagement:
         widget = playback_widget
 
         # Mock active state
-        mock_player = Mock()
+        mock_player = widget.player
         mock_player.active = True
-        widget.player = mock_player
         assert widget.is_player_active() is True
 
         mock_player.active = False
@@ -430,9 +395,6 @@ class TestPlaybackWidgetResourceCleanup:
     async def test_terminate_player(self, playback_widget):
         """Test player termination and cleanup."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("just_playback not available")
-
         # Set up state
         widget._current_path = "test.mp3"
         widget._eof_check_timer = Mock()
@@ -450,9 +412,6 @@ class TestPlaybackWidgetResourceCleanup:
     async def test_terminate_player_with_exception(self, playback_widget):
         """Test player termination when stop() raises exception."""
         widget = playback_widget
-        if widget.player is None:
-            pytest.skip("just_playback not available")
-
         # Set up state
         widget._current_path = "test.mp3"
 
@@ -480,7 +439,6 @@ class TestPlaybackWidgetMockScenarios:
     def test_player_exceptions_during_operations(self, playback_widget):
         """Test handling of player exceptions during various operations."""
         widget = playback_widget
-        widget.player = Mock()
         widget._current_path = "test.mp3"
 
         # Test play with exception
@@ -503,7 +461,6 @@ class TestPlaybackWidgetMockScenarios:
     def test_rapid_state_changes(self, playback_widget):
         """Test rapid play/pause/stop operations."""
         widget = playback_widget
-        widget.player = Mock()
         widget._current_path = "test.mp3"
 
         # Simulate rapid state changes
@@ -545,48 +502,14 @@ class TestPlaybackWidgetWithoutAudioBackend:
             assert widget.is_mounted
 
 
-class _FakePlayer:
-    """A stand-in for just_playback.Playback that tracks its own stream state.
-
-    ``load_file`` raising before the previous stream is stopped is exactly the
-    behaviour bug 6 is about, so it is modelled here rather than mocked away.
-    """
-
-    def __init__(self) -> None:
-        self.playing: bool = False
-        self.active: bool = False
-        self.paused: bool = False
-        self.duration: float = 5.0
-        self.curr_pos: float = 0.0
-        self.stop_calls: int = 0
-        self.loaded: str | None = None
-
-    def load_file(self, path: str) -> None:
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Audio file not found: {path}")
-        self.loaded = path
-        self.playing = False
-        self.active = False
-
-    def play(self) -> None:
-        self.playing = True
-        self.active = True
-        self.paused = False
-
-    def stop(self) -> None:
-        self.stop_calls += 1
-        self.playing = False
-        self.active = False
-        self.paused = False
-
-
 @pytest.fixture
-def fake_player_widget() -> Generator[PlaybackWidget, None, None]:
-    """A PlaybackWidget driving a _FakePlayer, with logging stubbed out."""
-    with patch.object(PlaybackWidget, "log", Mock()):
-        widget = PlaybackWidget()
-        widget.player = _FakePlayer()
-        yield widget
+def fake_player_widget(playback_widget: PlaybackWidget) -> PlaybackWidget:
+    """A PlaybackWidget driving the conftest fake player.
+
+    The fake tracks its own stream state, so ``load_file`` raising before the
+    previous stream is stopped (bug 6) is observable through ``is_playing()``.
+    """
+    return playback_widget
 
 
 class TestPlaybackWidgetMissingFile:
@@ -610,7 +533,7 @@ class TestPlaybackWidgetMissingFile:
         with patch.object(PlaybackWidget, "notify") as mock_notify:
             widget.load_track(str(nonexistent_file))
 
-        assert widget.player.stop_calls == 1
+        widget.player.stop.assert_called_once()
         assert widget._current_path is None
         assert widget.is_playing() is False
         mock_notify.assert_called_once()
@@ -623,12 +546,12 @@ class TestPlaybackWidgetMissingFile:
         widget = fake_player_widget
         self._start_playing(widget, str(mp3_files["short"]))
         other = str(mp3_files["long"])
-        widget.player.load_file = Mock(side_effect=RuntimeError("bad audio"))
+        widget.player.load_file.side_effect = RuntimeError("bad audio")
 
         with patch.object(PlaybackWidget, "notify") as mock_notify:
             widget.load_track(other)
 
-        assert widget.player.stop_calls == 1
+        widget.player.stop.assert_called_once()
         assert widget._current_path is None
         assert widget.is_playing() is False
         mock_notify.assert_called_once()
@@ -656,12 +579,7 @@ class TestPlaybackStateChangedMessages:
 
     @pytest.fixture
     def widget(self, playback_widget: PlaybackWidget) -> PlaybackWidget:
-        """A widget with a mocked, stopped player and a loaded track."""
-        mock_player = Mock()
-        mock_player.playing = False
-        mock_player.paused = False
-        mock_player.active = False
-        playback_widget.player = mock_player
+        """A widget with the (stopped) fake player and a loaded track."""
         playback_widget._current_path = "test.mp3"
         return playback_widget
 

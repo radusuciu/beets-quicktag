@@ -5,6 +5,7 @@ Provides fixtures for:
 - Temporary beets libraries with test data
 - Generated MP3 test files using ffmpeg
 - Mock configurations for different scenarios
+- A fake just_playback player for every test (see ``fake_playback``)
 """
 
 import shutil
@@ -13,10 +14,88 @@ import tempfile
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock, patch
 
 import pytest
 from beets.library import Library
+from just_playback import Playback
 from mutagen.id3 import ID3, TALB, TIT2, TPE1
+
+
+def make_fake_player(
+    *,
+    active: bool = False,
+    playing: bool = False,
+    paused: bool = False,
+    curr_pos: float = 0.0,
+    duration: float = 5.0,
+) -> Mock:
+    """A stand-in for ``just_playback.Playback`` that never opens a device.
+
+    It is a ``Mock`` so tests can assert on calls or install ``side_effect``
+    overrides, but its methods also update ``active``/``playing``/``paused``/
+    ``curr_pos`` the way the real player does, so widget code that reads state
+    back after acting on it behaves as it would with real audio.
+    """
+    player = Mock(spec=Playback)
+    player.active = active
+    player.playing = playing
+    player.paused = paused
+    player.curr_pos = curr_pos
+    player.duration = duration
+
+    def load_file(path: str) -> None:
+        player.active = False
+        player.playing = False
+        player.paused = False
+        player.curr_pos = 0.0
+
+    def play() -> None:
+        player.active = True
+        player.playing = True
+        player.paused = False
+
+    def pause() -> None:
+        player.playing = False
+        player.paused = True
+
+    def resume() -> None:
+        player.playing = True
+        player.paused = False
+
+    def stop() -> None:
+        player.active = False
+        player.playing = False
+        player.paused = False
+        player.curr_pos = 0.0
+
+    def seek(position: float) -> None:
+        player.curr_pos = position
+
+    player.load_file.side_effect = load_file
+    player.play.side_effect = play
+    player.pause.side_effect = pause
+    player.resume.side_effect = resume
+    player.stop.side_effect = stop
+    player.seek.side_effect = seek
+    return player
+
+
+@pytest.fixture(autouse=True)
+def fake_playback(request: pytest.FixtureRequest) -> Generator[None, None, None]:
+    """Give every ``PlaybackWidget`` a fake player instead of a real device.
+
+    Tests marked ``@pytest.mark.real_audio`` are left alone and construct the
+    real ``just_playback.Playback``; they must skip when it is unavailable.
+    """
+    if request.node.get_closest_marker("real_audio") is not None:
+        yield
+        return
+    with patch(
+        "beetsplug.quicktag.widgets.playback.Playback",
+        side_effect=lambda: make_fake_player(),
+    ):
+        yield
 
 
 @pytest.fixture
