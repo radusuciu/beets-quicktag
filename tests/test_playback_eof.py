@@ -19,21 +19,11 @@ from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
 from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackWidget
 
 
-def _mock_player(*, active: bool, playing: bool, paused: bool = False) -> Mock:
-    player = Mock()
-    player.active = active
-    player.playing = playing
-    player.paused = paused
-    player.duration = 5.0
-    player.curr_pos = 0.0 if not active else 2.0
-    return player
-
-
 @pytest.fixture
 def widget() -> Generator[PlaybackWidget, None, None]:
+    """A widget with the fake player from conftest and a track "loaded"."""
     with patch.object(PlaybackWidget, "log", Mock()):
         w = PlaybackWidget()
-        w.player = _mock_player(active=False, playing=False)
         w._current_path = "test.mp3"
         yield w
 
@@ -199,6 +189,7 @@ class _WidgetApp(App):
         yield self.widget
 
 
+@pytest.mark.real_audio
 @pytest.mark.asyncio
 async def test_real_file_end_posts_playback_ended(mp3_files: dict[str, Path]):
     """Real just_playback + real timer: a 0.5s file ends and posts once."""
@@ -300,6 +291,7 @@ class TestAppHandlesPlaybackEnded:
             navigate.assert_called_once_with(NavigateDirection.FORWARD)
 
 
+@pytest.mark.real_audio
 class TestEndToEnd:
     """Headless runs of the real app with real audio files."""
 
