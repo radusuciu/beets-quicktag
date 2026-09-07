@@ -36,7 +36,9 @@ class QuickTagPlugin(BeetsPlugin):
         cmd.func = self.run_quicktag
         return [cmd]
 
-    def run_quicktag(self, lib: BeetsLibrary, opts: optparse.Values, args):
+    def run_quicktag(
+        self, lib: BeetsLibrary, opts: optparse.Values, args: list[str]
+    ) -> None:
         query = list(args)
         items: BeetsResults = lib.items(query)
 
@@ -56,6 +58,10 @@ class QuickTagPlugin(BeetsPlugin):
         except DefinitionsFileError as error:
             raise ui.UserError(
                 f"quicktag: cannot read categories file: {error}"
+            ) from error
+        except OSError as error:
+            raise ui.UserError(
+                f"quicktag: cannot write categories file {definitions_path}: {error}"
             ) from error
         except ValueError as error:
             raise ui.UserError(f"quicktag: {error}") from error

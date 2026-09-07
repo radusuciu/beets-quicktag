@@ -131,6 +131,22 @@ class TestLoadRules:
             run(plugin, temp_beets_library)
         assert path.read_text() == "mood: [happy\n"
 
+    def test_unwritable_seed_target_is_a_user_error(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The config dir may not be writable; that must not be a traceback."""
+        plugin = make_plugin(
+            tmp_path,
+            monkeypatch,
+            categories={"mood": ["a"]},
+            categories_file=str(tmp_path / "missing" / "cats.yaml"),
+        )
+        with pytest.raises(UserError, match="cannot write"):
+            run(plugin, temp_beets_library)
+
     def test_invalid_seed_is_a_user_error(
         self,
         temp_beets_library: Library,
