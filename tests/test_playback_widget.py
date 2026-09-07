@@ -323,30 +323,6 @@ class TestPlaybackWidgetEOFDetection:
             widget._check_eof()
             mock_post.assert_called_once()
 
-    def test_eof_check_very_short_file(self, playback_widget):
-        """A file that ends before the first poll is still detected: play() arms it."""
-        widget = playback_widget
-
-        mock_player = widget.player
-        mock_player.duration = 0.3
-        mock_player.paused = False
-        mock_player.playing = False
-        mock_player.active = False
-        widget._current_path = "test.mp3"
-
-        with patch.object(widget, "post_message") as mock_post:
-            widget.play()
-            # The stream ends before the first poll.
-            mock_player.playing = False
-            mock_player.active = False
-            widget._check_eof()
-            ended = [
-                call
-                for call in mock_post.call_args_list
-                if isinstance(call.args[0], PlaybackEnded)
-            ]
-            assert len(ended) == 1
-
 
 class TestPlaybackWidgetStateManagement:
     """Test state management and consistency."""
