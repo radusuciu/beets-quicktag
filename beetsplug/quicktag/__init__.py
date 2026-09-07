@@ -37,7 +37,7 @@ class QuickTagPlugin(BeetsPlugin):
         return [cmd]
 
     def run_quicktag(self, lib: BeetsLibrary, opts: optparse.Values, args):
-        query = ui.decargs(args)
+        query = list(args)
         items: BeetsResults = lib.items(query)
 
         if not items:
