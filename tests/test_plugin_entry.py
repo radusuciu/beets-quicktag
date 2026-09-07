@@ -204,3 +204,14 @@ class TestLoadRules:
             )
         app_class.assert_not_called()
         assert "No tracks found" in capsys.readouterr().out
+
+    def test_query_is_passed_to_the_app(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        plugin = make_plugin(tmp_path, monkeypatch, categories={"mood": ["a"]})
+        with patch("beetsplug.quicktag.QuickTagApp") as app_class:
+            plugin.run_quicktag(temp_beets_library, optparse.Values(), ["artist:Test"])
+        assert app_class.call_args.kwargs["query"] == ["artist:Test"]

@@ -106,6 +106,7 @@ class QuickTagPlugin(BeetsPlugin):
                 bool
             ),
             definitions_path=definitions_path,
+            query=query,
         )
         app.run()
 

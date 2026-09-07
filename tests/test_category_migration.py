@@ -1,6 +1,7 @@
 """Renaming and deleting options and categories from the TUI, with the
 library migration that goes with them."""
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -28,10 +29,11 @@ def make_app(
     lib: Library,
     mapping: dict[str, list[str]],
     definitions_path: Path | None = None,
+    query: Sequence[str] = (),
 ) -> QuickTagApp:
     return QuickTagApp(
         lib=lib,
-        items=list(lib.items()),
+        items=list(lib.items(list(query))),
         definitions=CategoryDefinitions.from_config(mapping),
         autoplay_at_launch_enabled=False,
         autoplay_on_track_change_enabled=False,
@@ -39,6 +41,7 @@ def make_app(
         autosave_on_quit_enabled=False,
         keep_playing_on_track_change_if_playing_enabled=False,
         definitions_path=definitions_path,
+        query=query,
     )
 
 
@@ -304,3 +307,64 @@ class TestPanelInline:
             await pilot.pause()
             assert panel.selection_list.option_count == 0
             assert panel.selection_list.highlighted is None
+
+
+class TestReloadAfterMigration:
+    @pytest.mark.asyncio
+    async def test_replaces_stale_item_and_reloads_selections(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test():
+            item_id = app.item.id
+            set_field(temp_beets_library, item_id, "mood", "sad")
+            await app._reload_after_migration()
+            assert app.item.id == item_id
+            assert app.items[app.current_item_index] is app.item
+            assert app.item.get("mood") == "sad"
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            assert lst.selected == ["sad"]
+
+    @pytest.mark.asyncio
+    async def test_keeps_position_in_the_requeried_list(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("right")
+            await pilot.pause()
+            index, item_id = app.current_item_index, app.item.id
+            assert index == 1
+            await app._reload_after_migration()
+            assert (app.current_item_index, app.item.id) == (index, item_id)
+            assert len(app.items) == len(tracks(temp_beets_library))
+
+    @pytest.mark.asyncio
+    async def test_track_that_no_longer_matches_the_query_stays_current(
+        self, temp_beets_library: Library
+    ) -> None:
+        first, second = tracks(temp_beets_library)[:2]
+        set_field(temp_beets_library, first.id, "mood", "x")
+        set_field(temp_beets_library, second.id, "mood", "x")
+        app = make_app(temp_beets_library, {"mood": ["x"]}, query=["mood:x"])
+        async with app.run_test() as pilot:
+            assert len(app.items) == 2
+            await pilot.press("right")
+            await pilot.pause()
+            assert app.item.id == second.id
+            set_field(temp_beets_library, second.id, "mood", None)
+            await app._reload_after_migration()
+            assert app.item.id == second.id
+            assert app.items[app.current_item_index] is app.item
+            assert [item.id for item in app.items] == [first.id, second.id]
+            assert app.query_one("#selection-mood", CustomSelectionList).selected == []
+
+    @pytest.mark.asyncio
+    async def test_show_message_replaces_the_header_line(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["x"]})
+        async with app.run_test() as pilot:
+            app.header_widget.show_message("Library update failed")
+            await pilot.pause()
+            assert header_text(app) == "Library update failed"
