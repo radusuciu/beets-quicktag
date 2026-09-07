@@ -9,6 +9,8 @@ Covers:
 - Resource cleanup
 """
 
+import os
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -532,3 +534,100 @@ class TestPlaybackWidgetWithoutAudioBackend:
         app = _TestApp(widget)
         async with app.run_test():
             assert widget.is_mounted
+
+
+class _FakePlayer:
+    """A stand-in for just_playback.Playback that tracks its own stream state.
+
+    ``load_file`` raising before the previous stream is stopped is exactly the
+    behaviour bug 6 is about, so it is modelled here rather than mocked away.
+    """
+
+    def __init__(self) -> None:
+        self.playing: bool = False
+        self.active: bool = False
+        self.paused: bool = False
+        self.duration: float = 5.0
+        self.curr_pos: float = 0.0
+        self.stop_calls: int = 0
+        self.loaded: str | None = None
+
+    def load_file(self, path: str) -> None:
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Audio file not found: {path}")
+        self.loaded = path
+        self.playing = False
+        self.active = False
+
+    def play(self) -> None:
+        self.playing = True
+        self.active = True
+        self.paused = False
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+        self.playing = False
+        self.active = False
+        self.paused = False
+
+
+@pytest.fixture
+def fake_player_widget() -> Generator[PlaybackWidget, None, None]:
+    """A PlaybackWidget driving a _FakePlayer, with logging stubbed out."""
+    with patch.object(PlaybackWidget, "log", Mock()):
+        widget = PlaybackWidget()
+        widget.player = _FakePlayer()
+        yield widget
+
+
+class TestPlaybackWidgetMissingFile:
+    """Bug 6: a missing file must not leave the previous track playing."""
+
+    @staticmethod
+    def _start_playing(widget: PlaybackWidget, path: str) -> None:
+        widget.load_track(path)
+        widget.play()
+        assert widget.is_playing()
+
+    def test_missing_file_stops_playback_and_notifies(
+        self,
+        fake_player_widget: PlaybackWidget,
+        mp3_files: dict[str, Path],
+        nonexistent_file: Path,
+    ):
+        widget = fake_player_widget
+        self._start_playing(widget, str(mp3_files["short"]))
+
+        with patch.object(PlaybackWidget, "notify") as mock_notify:
+            widget.load_track(str(nonexistent_file))
+
+        assert widget.player.stop_calls == 1
+        assert widget._current_path is None
+        assert widget.is_playing() is False
+        mock_notify.assert_called_once()
+        assert mock_notify.call_args.kwargs["severity"] == "error"
+
+    def test_load_failure_stops_playback_and_notifies(
+        self, fake_player_widget: PlaybackWidget, mp3_files: dict[str, Path]
+    ):
+        """A file that exists but cannot be decoded gets the same treatment."""
+        widget = fake_player_widget
+        self._start_playing(widget, str(mp3_files["short"]))
+        other = str(mp3_files["long"])
+        widget.player.load_file = Mock(side_effect=RuntimeError("bad audio"))
+
+        with patch.object(PlaybackWidget, "notify") as mock_notify:
+            widget.load_track(other)
+
+        assert widget.player.stop_calls == 1
+        assert widget._current_path is None
+        assert widget.is_playing() is False
+        mock_notify.assert_called_once()
+
+    def test_unmounted_widget_does_not_raise_when_notifying(
+        self, fake_player_widget: PlaybackWidget, nonexistent_file: Path
+    ):
+        """Unit tests (and startup) use unmounted widgets; notify must be safe."""
+        fake_player_widget.load_track(str(nonexistent_file))  # must not raise
+
+        assert fake_player_widget._current_path is None
