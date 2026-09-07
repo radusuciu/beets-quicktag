@@ -1,3 +1,5 @@
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
@@ -14,7 +16,7 @@ from .definitions import CategoryDefinitions
 from .definitions_file import write_definitions_file
 from .item_values import read_item_values, write_item_values
 from .widgets.category_panel import CategoryPanel
-from .widgets.custom_selection_list import CustomSelectionList
+from .widgets.custom_selection_list import CustomSelectionList, EditKind
 from .widgets.inline_input import InlineInput
 from .widgets.input_with_label import InputWithLabel
 from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidget
@@ -88,6 +90,14 @@ class HeaderWidget(Vertical):
         self._header_text_display.update(text)
 
 
+@dataclass
+class PendingConfirm:
+    """What to run when ``panel``'s confirm prompt is answered ``y``."""
+
+    panel: CategoryPanel
+    run: Callable[[], Awaitable[None]]
+
+
 class QuickTagApp(App):
     BINDINGS = [
         # Escape has its own action so that Textual's built-in ctrl+q, which
@@ -151,6 +161,7 @@ class QuickTagApp(App):
         # comma). Kept per category so a save writes them back untouched
         # instead of deleting them from the track.
         self._unadoptable_values: dict[str, list[str]] = {}
+        self._pending_confirm: PendingConfirm | None = None
         self.playback_widget = PlaybackWidget(
             keep_audio_device_awake=keep_audio_device_awake_enabled
         )
@@ -260,23 +271,44 @@ class QuickTagApp(App):
             return False
         return True
 
-    def on_category_panel_option_submitted(
-        self, message: CategoryPanel.OptionSubmitted
+    async def on_category_panel_inline_submitted(
+        self, message: CategoryPanel.InlineSubmitted
     ) -> None:
-        """Enter in a panel's inline input: validate, persist, show, select.
+        """Enter in a panel's inline input, dispatched on what it was opened for."""
+        if message.kind is EditKind.ADD_OPTION:
+            self._add_option(message.panel, message.value)
+
+    def _add_option(self, panel: CategoryPanel, typed: str) -> None:
+        """Validate, persist, show and select a new option.
 
         Typing a new option almost always means the current track should get
         it, so the new option is selected as well as highlighted.
         """
-        panel = message.panel
         try:
-            value = self.definitions.add_option(panel.category, message.value)
+            value = self.definitions.add_option(panel.category, typed)
         except ValueError as error:
             panel.show_error(str(error))
             return
         self._persist_definitions()
         panel.add_option(value, select=True)
         panel.close_input()
+
+    def _ask(
+        self,
+        panel: CategoryPanel,
+        question: str,
+        run: Callable[[], Awaitable[None]],
+    ) -> None:
+        """Show ``question`` on ``panel``'s inline line; ``y`` runs ``run``."""
+        self._pending_confirm = PendingConfirm(panel, run)
+        panel.open_confirm(question)
+
+    async def on_category_panel_confirmed(
+        self, message: CategoryPanel.Confirmed
+    ) -> None:
+        pending, self._pending_confirm = self._pending_confirm, None
+        if pending is not None and pending.panel is message.panel:
+            await pending.run()
 
     def on_category_panel_input_opened(
         self, message: CategoryPanel.InputOpened
@@ -290,8 +322,8 @@ class QuickTagApp(App):
         Focus is left alone: the edit that is taking over already has it.
         """
         for panel in self.query(CategoryPanel):
-            if panel is not except_panel and panel.input_active:
-                panel.close_input(refocus=False)
+            if panel is not except_panel and panel.inline_active:
+                panel.close_inline(refocus=False)
         try:
             new_category_input = self._new_category_input()
         except NoMatches:
@@ -362,8 +394,9 @@ class QuickTagApp(App):
             # ScreenStackError, and there is nothing open to close anyway.
             return False
         for panel in self.query(CategoryPanel):
-            if panel.input_active:
-                panel.close_input()
+            if panel.inline_active:
+                self._pending_confirm = None
+                panel.close_inline()
                 return True
         try:
             new_category_input = self._new_category_input()

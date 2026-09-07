@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 from beets.library import Item, Library
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Input, Static
 from textual.widgets.selection_list import Selection
 
 from beetsplug.quicktag.app import QuickTagApp
 from beetsplug.quicktag.definitions import CategoryDefinitions
+from beetsplug.quicktag.widgets.category_panel import CategoryPanel
 from beetsplug.quicktag.widgets.custom_selection_list import (
     CustomSelectionList,
     EditKind,
@@ -131,3 +132,175 @@ class TestListEditKeys:
             await pilot.pause()
             keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
             assert {"f2", "delete", "ctrl+r", "ctrl+d"} <= keys
+
+
+class TestPanelInline:
+    @pytest.mark.asyncio
+    async def test_open_confirm_shows_question_and_takes_focus(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.open_confirm("Sure? y/n")
+            await pilot.pause()
+            assert panel.confirm_active is True
+            assert panel.inline_active is True
+            assert panel.input_active is False
+            assert app.focused is panel.confirm_prompt
+            assert panel.confirm_prompt.render().plain == "Sure? y/n"
+
+    @pytest.mark.asyncio
+    async def test_n_closes_confirm_and_refocuses_list(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            ran: list[bool] = []
+
+            async def run() -> None:
+                ran.append(True)
+
+            app._ask(panel, "Sure? y/n", run)
+            await pilot.pause()
+            await pilot.press("n")
+            await pilot.pause()
+            assert ran == []
+            assert panel.confirm_active is False
+            assert app.focused is panel.selection_list
+
+    @pytest.mark.asyncio
+    async def test_y_runs_the_pending_action_once(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            ran: list[bool] = []
+
+            async def run() -> None:
+                ran.append(True)
+
+            app._ask(panel, "Sure? y/n", run)
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert ran == [True]
+            assert panel.confirm_active is False
+            assert app.focused is panel.selection_list
+            assert app._pending_confirm is None
+
+    @pytest.mark.asyncio
+    async def test_y_is_typed_into_an_open_input_not_confirmed(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "y")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.input.value == "y"
+
+    @pytest.mark.asyncio
+    async def test_escape_cancels_confirm_and_does_not_quit(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+
+            async def run() -> None:
+                raise AssertionError("must not run")
+
+            app._ask(panel, "Sure? y/n", run)
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert panel.confirm_active is False
+            assert app.focused is panel.selection_list
+            assert app._pending_confirm is None
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_confirm_replaces_an_open_input_and_vice_versa(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            await pilot.press("plus", "x")
+            panel.open_confirm("Sure? y/n")
+            await pilot.pause()
+            assert panel.input_active is False
+            assert panel.input.value == ""
+            assert panel.confirm_active is True
+            panel.open_input()
+            await pilot.pause()
+            assert panel.confirm_active is False
+            assert panel.input_active is True
+            assert app.focused is panel.input
+
+    @pytest.mark.asyncio
+    async def test_ctrl_n_closes_an_open_confirm(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.open_confirm("Sure? y/n")
+            await pilot.pause()
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert panel.confirm_active is False
+            assert app.focused is app.query_one("#new-category-input", Input)
+
+    @pytest.mark.asyncio
+    async def test_confirm_in_one_panel_closes_input_in_another(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "x")
+            mood = app.query_one("#panel-mood", CategoryPanel)
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            vibe.open_confirm("Sure? y/n")
+            await pilot.pause()
+            assert mood.input_active is False
+            assert vibe.confirm_active is True
+            assert app.focused is vibe.confirm_prompt
+
+    @pytest.mark.asyncio
+    async def test_open_input_prefills_for_a_rename(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.open_input(EditKind.RENAME_OPTION, target="happy", initial="happy")
+            await pilot.pause()
+            assert panel.input.value == "happy"
+            assert panel.input.cursor_position == 5
+            assert "rename" in panel.input.placeholder
+            assert panel.edit_kind is EditKind.RENAME_OPTION
+            assert panel.edit_target == "happy"
+            panel.close_input()
+            assert panel.edit_kind is None
+            assert panel.edit_target is None
+
+    @pytest.mark.asyncio
+    async def test_set_options_rebuilds_and_clamps_highlight(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad", "calm"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.selection_list.select("sad")
+            panel.set_options(["happy", "calm"], highlighted=2)
+            await pilot.pause()
+            assert prompts(panel.selection_list) == ["happy", "calm"]
+            assert panel.selection_list.highlighted == 1
+            assert panel.selection_list.selected == []
+            panel.set_options([], highlighted=0)
+            await pilot.pause()
+            assert panel.selection_list.option_count == 0
+            assert panel.selection_list.highlighted is None
