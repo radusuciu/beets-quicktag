@@ -46,6 +46,18 @@ def test_rejects_non_identifier_category_name(name: str) -> None:
         validate_categories(categories_config)
 
 
+@pytest.mark.parametrize("name", [2020, True])
+def test_rejects_non_string_category_name(name: object) -> None:
+    """YAML can parse a category key as int/bool (e.g. ``2020:``, ``yes:``).
+
+    Such keys must raise UserError, not a bare TypeError from re.fullmatch.
+    """
+    categories_config: dict[object, object] = {name: ["a", "b"]}
+
+    with pytest.raises(UserError, match="letters, digits, underscores"):
+        validate_categories(categories_config)
+
+
 @pytest.mark.parametrize("name", ["year", "bpm", "length", "id", "path"])
 def test_rejects_non_string_fixed_field_collision(name: str) -> None:
     """Names that collide with a non-string fixed beets Item field fail."""
