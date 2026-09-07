@@ -6,6 +6,8 @@
 
 A [beets](https://beets.io/) plugin for tagging tracks with your own categories, as fast as possible. I wrote it to sort my library for DJing. Until 1.0 it may not be stable for others, but I'll still look at issues if you find it (hi!).
 
+![beet quicktag playing a track and tagging it from the keyboard](https://raw.githubusercontent.com/radusuciu/beets-quicktag/main/assets/demo.gif)
+
 ## Requirements
 
 - Python 3.11+
@@ -96,6 +98,14 @@ uv run pytest
 uv run ruff check .  # Linting
 uv run ruff format . # Formatting
 ```
+
+### Re-recording the Demo
+
+```bash
+scripts/record-demo.sh
+```
+
+This builds a throwaway beets library of generated tone files in a scratch directory, drives `beet quicktag` against it inside [asciinema](https://asciinema.org/) in a tmux pane, and renders the recording to `assets/demo.gif` with [agg](https://github.com/asciinema/agg). It needs `uv`, `tmux`, `ffmpeg` and `curl`, and fetches agg into your cache directory on first use. Your own beets config and library are never touched. Pass `--gif-only` to re-render the existing `assets/demo.cast` without recording again.
 
 ### Release Process
 
