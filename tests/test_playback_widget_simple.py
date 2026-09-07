@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from conftest import fake_player_of
 
 from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackWidget
 
@@ -48,7 +49,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
 
             file_path = str(mp3_files["short"])
             widget.load_track(file_path)
@@ -61,7 +62,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.load_file.side_effect = Exception("Load failed")
 
             file_path = str(mp3_files["short"])
@@ -95,7 +96,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
 
             file_path = str(mp3_files["short"])
 
@@ -113,7 +114,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.paused = False
             mock_player.playing = False
             widget._current_path = "test.mp3"
@@ -127,7 +128,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.paused = True
             widget._current_path = "test.mp3"
 
@@ -141,7 +142,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.paused = False
             mock_player.playing = True
             widget._current_path = "test.mp3"
@@ -157,7 +158,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.paused = False
 
             with patch.object(widget, "is_player_active", return_value=True):
@@ -169,7 +170,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.paused = True
 
             widget.pause()
@@ -200,7 +201,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             widget._current_path = "test.mp3"
 
             widget.stop()
@@ -213,7 +214,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.duration = 30.0
             mock_player.curr_pos = 10.0
 
@@ -226,7 +227,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.duration = 30.0
             mock_player.curr_pos = 10.0
 
@@ -239,7 +240,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.duration = 30.0
             mock_player.curr_pos = 25.0
 
@@ -259,7 +260,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.duration = 30.0
             mock_player.curr_pos = 15.0
             mock_player.active = True
@@ -285,7 +286,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.duration = 30.0
             mock_player.curr_pos = 0.0
             mock_player.active = False
@@ -301,7 +302,7 @@ class TestPlaybackWidgetCore:
         with patch.object(PlaybackWidget, "log", Mock()):
             widget = PlaybackWidget()
 
-            mock_player = widget.player
+            mock_player = fake_player_of(widget)
             mock_player.duration = 30.0
             mock_player.curr_pos = 29.6  # Near end
             mock_player.active = True  # Still active

@@ -413,7 +413,9 @@ class TestFinishedTrackDisplay:
 
         assert widget._progress_bar.total == 10.0
         assert widget._progress_bar.progress == 10.0
-        widget._time_remaining_display.update.assert_called_once_with("-00:00")
+        remaining = widget._time_remaining_display
+        assert isinstance(remaining, Mock)
+        remaining.update.assert_called_once_with("-00:00")
 
     def test_clear_ended_returns_to_the_players_position(self):
         widget = self._widget_at_end()
@@ -421,12 +423,16 @@ class TestFinishedTrackDisplay:
         widget._update_progress_display()
 
         widget.clear_ended()
-        widget.player.curr_pos = 2.0
-        widget._time_remaining_display.update.reset_mock()
+        player = widget.player
+        assert isinstance(player, Mock)
+        player.curr_pos = 2.0
+        remaining = widget._time_remaining_display
+        assert isinstance(remaining, Mock)
+        remaining.update.reset_mock()
         widget._update_progress_display()
 
         assert widget._progress_bar.progress == 2.0
-        widget._time_remaining_display.update.assert_called_once_with("-00:08")
+        remaining.update.assert_called_once_with("-00:08")
 
     def test_ended_is_ignored_without_a_known_duration(self):
         """No duration means no track: the widget hides itself as before."""

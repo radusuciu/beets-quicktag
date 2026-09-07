@@ -77,7 +77,7 @@ class TestKeepAliveEnabled:
             await pilot.pause()
             assert playback_class.call_count == 2
             keep_alive = widget.keep_alive
-            assert keep_alive is not None
+            assert isinstance(keep_alive, Mock)
             assert keep_alive is not widget.player
             keep_alive.load_file.assert_called_once_with(str(SILENCE_WAV))
             keep_alive.set_volume.assert_called_once_with(0)
@@ -90,7 +90,7 @@ class TestKeepAliveEnabled:
         async with _HostApp(widget).run_test() as pilot:
             await pilot.pause()
             keep_alive = widget.keep_alive
-            assert keep_alive is not None
+            assert isinstance(keep_alive, Mock)
         keep_alive.stop.assert_called_once_with()
         assert widget.keep_alive is None
 
@@ -105,7 +105,7 @@ class TestKeepAliveEnabled:
             widget.play()
             widget.pause()
             keep_alive = widget.keep_alive
-            assert keep_alive is not None
+            assert isinstance(keep_alive, Mock)
             assert keep_alive.playing is True
             keep_alive.pause.assert_not_called()
             keep_alive.stop.assert_not_called()
@@ -160,7 +160,7 @@ class TestKeepAliveFailures:
         async with _HostApp(widget).run_test() as pilot:
             await pilot.pause()
             keep_alive = widget.keep_alive
-            assert keep_alive is not None
+            assert isinstance(keep_alive, Mock)
             keep_alive.stop.side_effect = RuntimeError("device gone")
         assert widget.keep_alive is None
 

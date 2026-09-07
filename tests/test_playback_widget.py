@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from conftest import fake_player_of
 from textual.app import App
 from textual.widget import Widget
 
@@ -178,7 +179,7 @@ class TestPlaybackWidgetSeekOperations:
         """Test seeking forward in track."""
         widget = playback_widget
 
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.duration = 30.0
         mock_player.curr_pos = 10.0
 
@@ -189,7 +190,7 @@ class TestPlaybackWidgetSeekOperations:
         """Test seeking backward in track."""
         widget = playback_widget
 
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.duration = 30.0
         mock_player.curr_pos = 10.0
 
@@ -200,7 +201,7 @@ class TestPlaybackWidgetSeekOperations:
         """Test seeking beyond track boundaries."""
         widget = playback_widget
 
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.duration = 5.0
         mock_player.curr_pos = 2.0
 
@@ -227,7 +228,7 @@ class TestPlaybackWidgetSeekOperations:
         widget = playback_widget
 
         # Mock player without duration
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.duration = None
 
         widget.seek_relative(5)
@@ -241,7 +242,7 @@ class TestPlaybackWidgetEOFDetection:
         """EOF is the transition from playing to inactive (curr_pos is 0 then)."""
         widget = playback_widget
 
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.duration = 5.0
         mock_player.curr_pos = 2.0
         mock_player.active = True
@@ -264,7 +265,7 @@ class TestPlaybackWidgetEOFDetection:
         """An inactive player that was never observed playing is not EOF."""
         widget = playback_widget
 
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.duration = 5.0
         mock_player.curr_pos = 0.0
         mock_player.active = False
@@ -280,7 +281,7 @@ class TestPlaybackWidgetEOFDetection:
         widget = playback_widget
 
         # Mock player state - still active
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.duration = 5.0
         mock_player.curr_pos = 4.6  # Near end
         mock_player.active = True  # Still active
@@ -295,7 +296,7 @@ class TestPlaybackWidgetEOFDetection:
         widget = playback_widget
 
         # Mock player state - no current path
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.duration = 5.0
         mock_player.curr_pos = 4.6
         mock_player.active = False
@@ -309,7 +310,7 @@ class TestPlaybackWidgetEOFDetection:
         """Repeated polls after the end must not post again."""
         widget = playback_widget
 
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.active = True
         mock_player.playing = True
         widget._current_path = "test.mp3"
@@ -332,7 +333,7 @@ class TestPlaybackWidgetStateManagement:
         widget = playback_widget
 
         # Mock playing state
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.playing = True
         assert widget.is_playing() is True
 
@@ -350,7 +351,7 @@ class TestPlaybackWidgetStateManagement:
         widget = playback_widget
 
         # Mock active state
-        mock_player = widget.player
+        mock_player = fake_player_of(widget)
         mock_player.active = True
         assert widget.is_player_active() is True
 
@@ -415,41 +416,43 @@ class TestPlaybackWidgetMockScenarios:
     def test_player_exceptions_during_operations(self, playback_widget):
         """Test handling of player exceptions during various operations."""
         widget = playback_widget
+        player = fake_player_of(widget)
         widget._current_path = "test.mp3"
 
         # Test play with exception
-        widget.player.play.side_effect = Exception("Play failed")
-        widget.player.playing = False
-        widget.player.paused = False
+        player.play.side_effect = Exception("Play failed")
+        player.playing = False
+        player.paused = False
         widget.play()  # Should not raise
 
         # Test pause with exception
-        widget.player.pause.side_effect = Exception("Pause failed")
-        widget.player.paused = False
+        player.pause.side_effect = Exception("Pause failed")
+        player.paused = False
         widget.pause()  # Should not raise
 
         # Test seek with exception
-        widget.player.seek.side_effect = Exception("Seek failed")
-        widget.player.duration = 10.0
-        widget.player.curr_pos = 5.0
+        player.seek.side_effect = Exception("Seek failed")
+        player.duration = 10.0
+        player.curr_pos = 5.0
         widget.seek_relative(2)  # Should not raise
 
     def test_rapid_state_changes(self, playback_widget):
         """Test rapid play/pause/stop operations."""
         widget = playback_widget
+        player = fake_player_of(widget)
         widget._current_path = "test.mp3"
 
         # Simulate rapid state changes
-        widget.player.playing = False
-        widget.player.paused = False
+        player.playing = False
+        player.paused = False
 
         for _ in range(10):
             widget.play_pause()
             # Toggle playing state
-            widget.player.playing = not widget.player.playing
+            player.playing = not player.playing
 
         # Should handle rapid changes without issues
-        assert widget.player.play.call_count + widget.player.pause.call_count > 0
+        assert player.play.call_count + player.pause.call_count > 0
 
 
 class TestPlaybackWidgetWithoutAudioBackend:
@@ -504,12 +507,13 @@ class TestPlaybackWidgetMissingFile:
         nonexistent_file: Path,
     ):
         widget = fake_player_widget
+        player = fake_player_of(widget)
         self._start_playing(widget, str(mp3_files["short"]))
 
         with patch.object(PlaybackWidget, "notify") as mock_notify:
             widget.load_track(str(nonexistent_file))
 
-        widget.player.stop.assert_called_once()
+        player.stop.assert_called_once()
         assert widget._current_path is None
         assert widget.is_playing() is False
         mock_notify.assert_called_once()
@@ -520,14 +524,15 @@ class TestPlaybackWidgetMissingFile:
     ):
         """A file that exists but cannot be decoded gets the same treatment."""
         widget = fake_player_widget
+        player = fake_player_of(widget)
         self._start_playing(widget, str(mp3_files["short"]))
         other = str(mp3_files["long"])
-        widget.player.load_file.side_effect = RuntimeError("bad audio")
+        player.load_file.side_effect = RuntimeError("bad audio")
 
         with patch.object(PlaybackWidget, "notify") as mock_notify:
             widget.load_track(other)
 
-        widget.player.stop.assert_called_once()
+        player.stop.assert_called_once()
         assert widget._current_path is None
         assert widget.is_playing() is False
         mock_notify.assert_called_once()
@@ -565,17 +570,19 @@ class TestPlaybackStateChangedMessages:
         assert _state_changes(mock_post) == [True]
 
     def test_play_while_playing_posts_nothing(self, widget: PlaybackWidget) -> None:
+        player = fake_player_of(widget)
         with patch.object(widget, "post_message") as mock_post:
             widget.play()
-            widget.player.playing = True
+            player.playing = True
             widget.play()
         assert _state_changes(mock_post) == [True]
 
     def test_pause_posts_not_playing(self, widget: PlaybackWidget) -> None:
+        player = fake_player_of(widget)
         with patch.object(widget, "post_message") as mock_post:
             widget.play()
-            widget.player.playing = True
-            widget.player.active = True
+            player.playing = True
+            player.active = True
             widget.pause()
         assert _state_changes(mock_post) == [True, False]
 
@@ -591,13 +598,14 @@ class TestPlaybackStateChangedMessages:
         assert _state_changes(mock_post) == []
 
     def test_eof_posts_not_playing(self, widget: PlaybackWidget) -> None:
+        player = fake_player_of(widget)
         with patch.object(widget, "post_message") as mock_post:
             widget.play()
-            widget.player.playing = True
-            widget.player.active = True
+            player.playing = True
+            player.active = True
             widget._check_eof()
-            widget.player.playing = False
-            widget.player.active = False
+            player.playing = False
+            player.active = False
             widget._check_eof()
         assert _state_changes(mock_post) == [True, False]
 
