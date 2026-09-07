@@ -8,7 +8,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.content import Content
 from textual.dom import NoMatches
-from textual.widgets import Footer, Static
+from textual.widgets import Footer, Input, Static
 from textual.widgets.selection_list import Selection
 
 from .widgets.custom_selection_list import CustomSelectionList
@@ -196,6 +196,24 @@ class QuickTagApp(App):
             yield Static("No items to tag.")
 
         yield Footer()
+
+    # Actions bound to printable keys. While an Input has focus those keys are
+    # typed into it and never reach the App.
+    _TYPED_KEY_ACTIONS = frozenset(
+        {"play_pause_current_item", "seek_backward", "seek_forward"}
+    )
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Hide the playback bindings from the footer while an Input has focus.
+
+        Textual drops ancestor bindings that the focused widget will consume, but
+        it decides by mapping the key name to a character and has no entry for
+        "slash". The Input still swallows the actual "/" key press, so without
+        this the footer advertises Play/Pause that cannot be triggered.
+        """
+        if action in self._TYPED_KEY_ACTIONS and isinstance(self.focused, Input):
+            return False
+        return True
 
     async def action_quit(self) -> None:
         """Action to quit the application."""

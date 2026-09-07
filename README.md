@@ -44,7 +44,7 @@ This opens a TUI that plays each track and shows a checklist per category, plus 
 | Letter or digit | Jump to the next value in the list that starts with that character |
 | `Escape` | Quit |
 
-The footer shows the keys that apply to the focused widget. While the comments field has focus, `Left` and `Right` move the text cursor instead of changing track, and the footer drops them.
+The footer shows the keys that apply to the focused widget. While the comments field has focus, `Left` and `Right` move the text cursor, and `/`, `<` and `>` are typed into the comment, so the footer drops those entries. Press `Tab` to leave the field first.
 
 Tags are saved when you move to another track, and on quit if `autosave_on_quit` is on. Each category is stored in the beets database as a flexible attribute, with selected values joined by `, `. Audio files are not written to.
 

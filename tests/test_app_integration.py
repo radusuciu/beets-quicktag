@@ -1029,6 +1029,53 @@ class TestQuickTagAppNavigationBindings:
             footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
             assert not ({"left", "right"} & footer_keys)
 
+    @pytest.mark.asyncio
+    async def test_footer_hides_playback_keys_with_comments_input_focused(
+        self, temp_beets_library: Library
+    ):
+        """With the comments input focused, "/", "<" and ">" are typed into the
+        comment, so the footer must not advertise them as playback controls.
+
+        Textual already drops "<" and ">" because it can map those key names to
+        characters, but it cannot map "slash", so without help the footer keeps
+        showing Play/Pause while the Input swallows the key press.
+        """
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test() as pilot:
+            comments = app.query_one("#comments-input", InputWithLabel).query_one(Input)
+            comments.focus()
+            await pilot.pause()
+
+            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+            assert not ({"slash", "less_than_sign", "greater_than_sign"} & footer_keys)
+
+            with patch.object(app, "action_play_pause_current_item") as play_pause:
+                await pilot.press("slash", "less_than_sign", "greater_than_sign")
+                await pilot.pause()
+
+            assert comments.value == "/<>"
+            play_pause.assert_not_called()
+
+            app.query_one("#selection-genre", CustomSelectionList).focus()
+            await pilot.pause()
+
+            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+            assert {"slash", "less_than_sign", "greater_than_sign"} <= footer_keys
+
 
 class TestTerminalTitle:
     """The terminal window title follows what is audibly playing."""
