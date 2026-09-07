@@ -38,7 +38,13 @@ This opens a TUI that plays each track and shows a checklist per category, plus 
 | `Left` / `Right` | Previous / next track |
 | `/` | Play or pause |
 | `<` / `>` | Seek 5 seconds back / forward |
+| `Tab` / `Shift+Tab` | Move focus to the next / previous category list or the comments field |
+| `Up` / `Down` | Move the highlight within a category list |
+| `Space` / `Enter` | Toggle the highlighted value |
+| Letter or digit | Jump to the next value in the list that starts with that character |
 | `Escape` | Quit |
+
+The footer shows the keys that apply to the focused widget. While the comments field has focus, `Left` and `Right` move the text cursor instead of changing track, and the footer drops them.
 
 Tags are saved when you move to another track, and on quit if `autosave_on_quit` is on. Each category is stored in the beets database as a flexible attribute, with selected values joined by `, `. Audio files are not written to.
 
