@@ -288,3 +288,68 @@ class TestPlusOpensInlineInput:
             ] == ["happy", "sad", "calm"]
             assert lst.highlighted == 2
             assert lst.selected == ["sad"]
+
+
+class TestAddOptionFlow:
+    @pytest.mark.asyncio
+    async def test_enter_adds_selects_persists_and_refocuses_list(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "a", "d", "enter")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            lst = panel.selection_list
+            assert app.definitions.options("mood") == ["happy", "sad"]
+            assert lst.option_count == 2
+            assert lst.selected == ["sad"]
+            assert lst.highlighted == 1
+            assert panel.input_active is False
+            assert app.focused is lst
+        assert read_definitions_file(path).options("mood") == ["happy", "sad"]
+
+    @pytest.mark.asyncio
+    async def test_new_option_is_saved_on_the_current_track(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "a", "d", "enter")
+            item_id = app.item.id
+            await app._save_current_item_tags()
+        assert temp_beets_library.get_item(item_id).get("mood") == "sad"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("typed", "message_part"),
+        [
+            (["enter"], "cannot be empty"),
+            (["h", "a", "p", "p", "y", "enter"], "already has 'happy'"),
+            (["a", "comma", "b", "enter"], "cannot contain a comma"),
+        ],
+    )
+    async def test_invalid_option_shows_error_and_stays_open(
+        self, temp_beets_library: Library, typed: list[str], message_part: str
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", *typed)
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.input_active is True
+            assert message_part in panel.input.placeholder
+            assert panel.input.value == ""
+            assert app.focused is panel.input
+            assert app.definitions.options("mood") == ["happy"]
+
+    @pytest.mark.asyncio
+    async def test_error_placeholder_resets_on_next_open(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "enter")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.close_input()
+            await pilot.press("plus")
+            assert "Enter to add" in panel.input.placeholder

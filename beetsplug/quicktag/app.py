@@ -236,6 +236,24 @@ class QuickTagApp(App):
             return False
         return True
 
+    def on_category_panel_option_submitted(
+        self, message: CategoryPanel.OptionSubmitted
+    ) -> None:
+        """Enter in a panel's inline input: validate, persist, show, select.
+
+        Typing a new option almost always means the current track should get
+        it, so the new option is selected as well as highlighted.
+        """
+        panel = message.panel
+        try:
+            value = self.definitions.add_option(panel.category, message.value)
+        except ValueError as error:
+            panel.show_error(str(error))
+            return
+        self._persist_definitions()
+        panel.add_option(value, select=True)
+        panel.close_input()
+
     async def action_quit(self) -> None:
         """Action to quit the application."""
         self.log.info(
