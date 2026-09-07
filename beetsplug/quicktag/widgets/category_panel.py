@@ -50,6 +50,17 @@ class CategoryPanel(Vertical):
             self.panel = panel
             self.value = value
 
+    class InputOpened(Message):
+        """The panel's inline input has just been revealed.
+
+        Whoever owns the screen decides what else must close; the panel only
+        announces it.
+        """
+
+        def __init__(self, panel: CategoryPanel) -> None:
+            super().__init__()
+            self.panel = panel
+
     def __init__(self, category: str, options: list[str]) -> None:
         super().__init__(id=f"panel-{category}")
         self.category = category
@@ -89,13 +100,20 @@ class CategoryPanel(Vertical):
         inline_input.placeholder = placeholder
         inline_input.display = True
         inline_input.focus()
+        self.post_message(self.InputOpened(self))
 
-    def close_input(self) -> None:
+    def close_input(self, *, refocus: bool = True) -> None:
+        """Hide and clear the input; ``refocus`` moves focus back to the list.
+
+        Closing an input that never had focus (because another one is taking
+        over) must not steal focus, hence ``refocus=False``.
+        """
         inline_input = self.input
         inline_input.display = False
         inline_input.value = ""
         inline_input.placeholder = OPTION_PLACEHOLDER
-        self.selection_list.focus()
+        if refocus:
+            self.selection_list.focus()
 
     def show_error(self, message: str) -> None:
         """Show ``message`` on the input line and keep it open for a retry."""

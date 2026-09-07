@@ -516,6 +516,59 @@ class TestAddCategoryFlow:
             assert app.query_one("#panel-mood", CategoryPanel)
 
 
+class TestOnlyOneInlineEditOpen:
+    @pytest.mark.asyncio
+    async def test_ctrl_n_closes_an_open_option_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "a", "ctrl+n")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            new_input = app.query_one("#new-category-input", Input)
+            assert panel.input_active is False
+            assert panel.input.value == ""
+            assert new_input.display is True
+            assert app.focused is new_input
+            await pilot.press("escape")
+            assert new_input.display is False
+            assert app.focused is panel.selection_list
+
+    @pytest.mark.asyncio
+    async def test_plus_closes_the_open_category_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v")
+            # "+" typed into the focused Input would be text, so go back to
+            # the list the way the user would (Tab is bound elsewhere).
+            app.query_one("#selection-mood", CustomSelectionList).focus()
+            await pilot.press("plus")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is False
+            assert new_input.value == ""
+            assert panel.input_active is True
+            assert app.focused is panel.input
+
+    @pytest.mark.asyncio
+    async def test_plus_closes_another_panels_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s")
+            app.query_one("#selection-vibe", CustomSelectionList).focus()
+            await pilot.press("plus")
+            mood = app.query_one("#panel-mood", CategoryPanel)
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert mood.input_active is False
+            assert mood.input.value == ""
+            assert vibe.input_active is True
+            assert app.focused is vibe.input
+
+
 class TestEscape:
     @pytest.mark.asyncio
     async def test_escape_cancels_option_input_and_does_not_quit(

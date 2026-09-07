@@ -277,6 +277,24 @@ class QuickTagApp(App):
         panel.add_option(value, select=True)
         panel.close_input()
 
+    def on_category_panel_input_opened(
+        self, message: CategoryPanel.InputOpened
+    ) -> None:
+        """Keep at most one inline edit open, so Escape is unambiguous."""
+        self._close_other_panel_inputs(except_panel=message.panel)
+        try:
+            new_category_input = self._new_category_input()
+        except NoMatches:
+            return
+        if new_category_input.display:
+            self._close_new_category_input()
+
+    def _close_other_panel_inputs(self, *, except_panel: CategoryPanel | None) -> None:
+        """Close every open panel input except ``except_panel``'s, quietly."""
+        for panel in self.query(CategoryPanel):
+            if panel is not except_panel and panel.input_active:
+                panel.close_input(refocus=False)
+
     def _new_category_input(self) -> Input:
         return self.query_one("#new-category-input", Input)
 
@@ -286,6 +304,7 @@ class QuickTagApp(App):
             new_category_input = self._new_category_input()
         except NoMatches:
             return
+        self._close_other_panel_inputs(except_panel=None)
         new_category_input.value = ""
         new_category_input.placeholder = CATEGORY_PLACEHOLDER
         new_category_input.display = True
