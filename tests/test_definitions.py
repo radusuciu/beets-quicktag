@@ -175,3 +175,90 @@ class TestRenameAndRemove:
     def test_remove_unknown_option_raises(self, defs: CategoryDefinitions) -> None:
         with pytest.raises(ValueError, match="has no option 'nope'"):
             defs.remove_option("mood", "nope")
+
+
+class TestFromConfig:
+    def test_round_trips_mapping_in_order(self) -> None:
+        mapping: dict[object, object] = {
+            "mood": ["happy", "sad"],
+            "vibe": ("afro", "asian"),
+            "fresh": [],
+        }
+        defs = CategoryDefinitions.from_config(mapping)
+        assert defs.categories == ["mood", "vibe", "fresh"]
+        assert defs.to_mapping() == {
+            "mood": ["happy", "sad"],
+            "vibe": ["afro", "asian"],
+            "fresh": [],
+        }
+
+    def test_to_mapping_returns_copies(self) -> None:
+        defs = CategoryDefinitions.from_config({"mood": ["happy"]})
+        defs.to_mapping()["mood"].append("x")
+        assert defs.options("mood") == ["happy"]
+
+    @pytest.mark.parametrize("name", [2020, True])
+    def test_rejects_non_string_category_name(self, name: object) -> None:
+        """YAML parses ``2020:`` and ``yes:`` as int/bool keys."""
+        with pytest.raises(ValueError, match="letters, digits, underscores"):
+            CategoryDefinitions.from_config({name: ["a"]})
+
+    def test_rejects_bad_pattern(self) -> None:
+        with pytest.raises(ValueError, match="letters, digits, underscores"):
+            CategoryDefinitions.from_config({"my mood": ["a"]})
+
+    def test_rejects_reserved_comments(self) -> None:
+        with pytest.raises(ValueError, match="reserved"):
+            CategoryDefinitions.from_config({"comments": ["a"]})
+
+    @pytest.mark.parametrize("name", ["year", "bpm", "length", "id", "path"])
+    def test_rejects_non_text_fixed_field(self, name: str) -> None:
+        with pytest.raises(ValueError, match=f"'{name}'"):
+            CategoryDefinitions.from_config({name: ["a"]})
+
+    def test_allows_text_fixed_field_with_warning(self) -> None:
+        defs = CategoryDefinitions.from_config({"album": ["rock"]})
+        assert defs.categories == ["album"]
+        warnings = defs.fixed_field_warnings()
+        assert len(warnings) == 1
+        assert "album" in warnings[0]
+        assert "built-in beets field" in warnings[0]
+
+    def test_allows_list_fixed_field_without_warning(self) -> None:
+        if not CategoryDefinitions.is_list_field("genres"):
+            pytest.skip("installed beets has no list-valued 'genres' field")
+        defs = CategoryDefinitions.from_config({"genres": ["House"]})
+        assert defs.fixed_field_warnings() == []
+
+    def test_no_warning_for_flexible_attributes(self) -> None:
+        defs = CategoryDefinitions.from_config({"mood": ["a"], "genre": ["b"]})
+        assert defs.fixed_field_warnings() == []
+
+    def test_rejects_bare_string_options(self) -> None:
+        with pytest.raises(ValueError, match="bare string"):
+            CategoryDefinitions.from_config({"mood": "happy"})
+
+    def test_rejects_non_list_options(self) -> None:
+        with pytest.raises(ValueError, match="must be a list of strings"):
+            CategoryDefinitions.from_config({"mood": 42})
+
+    def test_rejects_non_string_option_entry(self) -> None:
+        with pytest.raises(ValueError, match="must all be strings"):
+            CategoryDefinitions.from_config({"mood": ["happy", 3]})
+
+    def test_rejects_empty_option_entry(self) -> None:
+        with pytest.raises(ValueError, match="cannot be empty"):
+            CategoryDefinitions.from_config({"mood": ["happy", ""]})
+
+    def test_rejects_option_with_comma(self) -> None:
+        with pytest.raises(ValueError, match="cannot contain a comma"):
+            CategoryDefinitions.from_config({"mood": ["a, b"]})
+
+    def test_rejects_duplicate_options_case_insensitively(self) -> None:
+        with pytest.raises(ValueError, match="already has 'happy'"):
+            CategoryDefinitions.from_config({"mood": ["happy", "Happy"]})
+
+    def test_rejects_duplicate_category_case_insensitively(self) -> None:
+        # dict keys are case-sensitive, so YAML can hand us both.
+        with pytest.raises(ValueError, match="already exists"):
+            CategoryDefinitions.from_config({"mood": ["a"], "Mood": ["b"]})

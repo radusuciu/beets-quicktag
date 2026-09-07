@@ -9,6 +9,8 @@ with a message suitable for showing directly to the user.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from typing import Self
 
 from beets.dbcore.types import String
 from beets.library import Item
@@ -36,6 +38,57 @@ class CategoryDefinitions:
     def options(self, category: str) -> list[str]:
         """Option values of ``category`` in display order (a copy)."""
         return list(self._require_category(category))
+
+    # ---- construction from / export to a plain mapping -----------------------
+
+    @classmethod
+    def from_config(cls, mapping: Mapping[object, object]) -> Self:
+        """Build from the YAML-shaped mapping used by the config and the file.
+
+        Rules differ from the interactive ``add_*`` methods in one way: a
+        category whose name is a fixed beets *text* field is accepted (see
+        :meth:`fixed_field_warnings`), because it may already hold data.
+        """
+        defs = cls()
+        for raw_name, raw_options in mapping.items():
+            if not isinstance(raw_name, str):
+                raise ValueError(
+                    f"Invalid category name {raw_name!r}: use only letters, "
+                    "digits, underscores and hyphens, and do not start with "
+                    "a digit."
+                )
+            name = defs._validate_new_name(raw_name, current=None, loaded=True)
+            if isinstance(raw_options, str):
+                raise ValueError(
+                    f"Category '{name}' options must be a list of strings, "
+                    f"e.g. '{name}: [{raw_options}, other_option]', not a "
+                    f"bare string '{raw_options}'."
+                )
+            if not isinstance(raw_options, list | tuple):
+                raise ValueError(
+                    f"Category '{name}' options must be a list of strings."
+                )
+            if not all(isinstance(option, str) for option in raw_options):
+                raise ValueError(f"Category '{name}' options must all be strings.")
+            options: list[str] = []
+            for option in raw_options:
+                options.append(defs._validate_option(name, option, options))
+            defs._categories[name] = options
+        return defs
+
+    def to_mapping(self) -> dict[str, list[str]]:
+        """The YAML-shaped mapping (copies), in display order."""
+        return {name: list(options) for name, options in self._categories.items()}
+
+    def fixed_field_warnings(self) -> list[str]:
+        """One warning per category that is a non-list fixed beets field."""
+        return [
+            f"quicktag: category '{name}' is a built-in beets field; its "
+            "values are stored in that field and 'beet write' will write "
+            "them to your files."
+            for name in self._categories
+            if self.is_fixed_field(name) and not self.is_list_field(name)
+        ]
 
     # ---- field kind detection (runtime, never hardcoded) ------------------
 
