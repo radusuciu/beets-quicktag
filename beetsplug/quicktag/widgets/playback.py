@@ -167,7 +167,7 @@ class PlaybackWidget(Widget):
             self.player = None
         self._current_path = None
 
-    def load_track(self, new_path: str) -> None:
+    def load_track(self, new_path: str | None) -> None:
         """Loads a track for playback. Does not start playing immediately."""
         if not self.player:
             self.log.warning("just_playback player not available. Cannot load track.")

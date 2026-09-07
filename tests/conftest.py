@@ -21,6 +21,8 @@ from beets.library import Library
 from just_playback import Playback
 from mutagen.id3 import ID3, TALB, TIT2, TPE1
 
+from beetsplug.quicktag.widgets.playback import PlaybackWidget
+
 
 def make_fake_player(
     *,
@@ -379,3 +381,14 @@ def unicode_filename(temp_dir: Path, mp3_files: dict[str, Path]) -> Path:
 def nonexistent_file(temp_dir: Path) -> Path:
     """Return path to a non-existent file for testing error handling."""
     return temp_dir / "does_not_exist.mp3"
+
+
+def fake_player_of(widget: PlaybackWidget) -> Mock:
+    """Return ``widget.player`` typed as the fake that ``fake_playback`` installs.
+
+    ``PlaybackWidget.player`` is declared ``Playback | None``; tests that poke
+    the fake's state or assert on its calls need the ``Mock`` type instead.
+    """
+    player = widget.player
+    assert isinstance(player, Mock)
+    return player

@@ -10,12 +10,14 @@ Covers:
 """
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Library
+from textual.content import Content
 from textual.widgets import Footer, Input, Static
 from textual.widgets._footer import FooterKey
 
@@ -27,7 +29,9 @@ from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackStateChan
 
 def header_text(app: QuickTagApp) -> str:
     """Return the text the header Static actually renders."""
-    return app.query_one("#header_text_content", Static).render().plain
+    rendered = app.query_one("#header_text_content", Static).render()
+    assert isinstance(rendered, Content)
+    return rendered.plain
 
 
 class TestQuickTagAppPlaybackConfiguration:
@@ -423,7 +427,9 @@ class TestQuickTagAppNavigation:
 
             assert app.current_item_index == len(items) - 1
             assert "All items processed" in header_text(app)
-            assert temp_beets_library.get_item(last_item_id).get("genre") == "Rock"
+            last_item = temp_beets_library.get_item(last_item_id)
+            assert last_item is not None
+            assert last_item.get("genre") == "Rock"
 
 
 class TestQuickTagAppPlaybackActions:
@@ -781,8 +787,9 @@ class TestQuickTagAppRealPlaybackIntegration:
             pytest.skip("just_playback not available")
 
         async with app.run_test():
-            # Mock the item path to point to our test file
-            app.item.path = str(mp3_files["short"])
+            # Point the item at our test file (beets stores paths as bytes)
+            assert app.item is not None
+            app.item.path = os.fsencode(mp3_files["short"])
 
             # Load and play
             await app._load_current_item_for_playback()
@@ -889,6 +896,7 @@ class TestQuickTagAppMarkupSafety:
         async with app.run_test():
             selection_list = app.query_one("#selection-genre", CustomSelectionList)
             prompt = selection_list.get_option_at_index(0).prompt
+            assert isinstance(prompt, Content)
             assert prompt.plain == "lo-fi [chill]"
 
 

@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Item, Library
+from conftest import fake_player_of
 from textual.app import App, ComposeResult
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
@@ -28,19 +29,27 @@ def widget() -> Generator[PlaybackWidget, None, None]:
         yield w
 
 
+@pytest.fixture
+def player(widget: PlaybackWidget) -> Mock:
+    """The fake player behind ``widget``."""
+    return fake_player_of(widget)
+
+
 class TestEofTransitionDetection:
     """_check_eof must fire exactly once when playback stops on its own."""
 
-    def test_posts_once_when_playing_then_inactive(self, widget: PlaybackWidget):
-        widget.player.active = True
-        widget.player.playing = True
+    def test_posts_once_when_playing_then_inactive(
+        self, widget: PlaybackWidget, player: Mock
+    ):
+        player.active = True
+        player.playing = True
         with patch.object(widget, "post_message") as post:
             widget._check_eof()  # observes playing
             post.assert_not_called()
 
-            widget.player.active = False
-            widget.player.playing = False
-            widget.player.curr_pos = 0.0  # what just_playback really reports
+            player.active = False
+            player.playing = False
+            player.curr_pos = 0.0  # what just_playback really reports
             widget._check_eof()
             post.assert_called_once()
             assert isinstance(post.call_args.args[0], PlaybackEnded)
@@ -54,44 +63,48 @@ class TestEofTransitionDetection:
             widget._check_eof()
             post.assert_not_called()
 
-    def test_no_post_while_paused(self, widget: PlaybackWidget):
-        widget.player.active = True
-        widget.player.playing = True
+    def test_no_post_while_paused(self, widget: PlaybackWidget, player: Mock):
+        player.active = True
+        player.playing = True
         with patch.object(widget, "post_message") as post:
             widget._check_eof()
-            widget.player.playing = False
-            widget.player.paused = True  # paused: still active
+            player.playing = False
+            player.paused = True  # paused: still active
             widget._check_eof()
             post.assert_not_called()
 
-    def test_no_post_after_explicit_stop(self, widget: PlaybackWidget):
-        widget.player.active = True
-        widget.player.playing = True
+    def test_no_post_after_explicit_stop(self, widget: PlaybackWidget, player: Mock):
+        player.active = True
+        player.playing = True
         with patch.object(widget, "post_message") as post:
             widget._check_eof()
             widget.stop()
-            widget.player.active = False
-            widget.player.playing = False
+            player.active = False
+            player.playing = False
             widget._check_eof()
             post.assert_not_called()
 
-    def test_no_post_after_loading_new_track(self, widget: PlaybackWidget):
-        widget.player.active = True
-        widget.player.playing = True
+    def test_no_post_after_loading_new_track(
+        self, widget: PlaybackWidget, player: Mock
+    ):
+        player.active = True
+        player.playing = True
         with patch.object(widget, "post_message") as post:
             widget._check_eof()
             widget.load_track("other.mp3")  # load_file kills active playback
-            widget.player.active = False
-            widget.player.playing = False
+            player.active = False
+            player.playing = False
             widget._check_eof()
             post.assert_not_called()
 
-    def test_play_arms_detection_before_first_poll(self, widget: PlaybackWidget):
+    def test_play_arms_detection_before_first_poll(
+        self, widget: PlaybackWidget, player: Mock
+    ):
         """A track shorter than the poll interval must still be detected."""
         with patch.object(widget, "post_message") as post:
             widget.play()  # player.play() called; track ends before next poll
-            widget.player.active = False
-            widget.player.playing = False
+            player.active = False
+            player.playing = False
             widget._check_eof()
             ended = [
                 call
@@ -104,13 +117,15 @@ class TestEofTransitionDetection:
 class TestPlaybackGeneration:
     """Bug 7: an EOF message must say which playback it belongs to."""
 
-    def test_check_eof_posts_the_current_generation(self, widget: PlaybackWidget):
-        widget.player.active = True
-        widget.player.playing = True
+    def test_check_eof_posts_the_current_generation(
+        self, widget: PlaybackWidget, player: Mock
+    ):
+        player.active = True
+        player.playing = True
         with patch.object(widget, "post_message") as post:
             widget._check_eof()  # observes playing
-            widget.player.active = False
-            widget.player.playing = False
+            player.active = False
+            player.playing = False
             widget._check_eof()
 
         message = post.call_args.args[0]
@@ -139,14 +154,16 @@ class TestPlaybackGeneration:
         widget.load_track("/nonexistent/file.mp3")
         assert widget.playback_generation > start
 
-    def test_generation_advances_on_stop(self, widget: PlaybackWidget) -> None:
+    def test_generation_advances_on_stop(
+        self, widget: PlaybackWidget, player: Mock
+    ) -> None:
         """An explicit stop() is a track change too.
 
         An EOF already queued for the playback that was just stopped must be
         dropped as stale, matching _handle_load_failure's behaviour.
         """
-        widget.player.active = True
-        widget.player.playing = True
+        player.active = True
+        player.playing = True
         start = widget.playback_generation
 
         widget.stop()
@@ -157,15 +174,17 @@ class TestPlaybackGeneration:
 class TestProgressDisplayIsToldAboutEof:
     """Bug 13: the widget tells the progress display; the display never polls."""
 
-    def test_eof_marks_the_progress_display_as_ended(self, widget: PlaybackWidget):
-        widget.player.active = True
-        widget.player.playing = True
+    def test_eof_marks_the_progress_display_as_ended(
+        self, widget: PlaybackWidget, player: Mock
+    ):
+        player.active = True
+        player.playing = True
         with patch.object(widget._playback_progress, "mark_ended") as mark_ended:
             widget._check_eof()  # observes playing
             mark_ended.assert_not_called()
 
-            widget.player.active = False
-            widget.player.playing = False
+            player.active = False
+            player.playing = False
             widget._check_eof()
             mark_ended.assert_called_once()
 
@@ -331,8 +350,10 @@ class TestEndToEnd:
 
 
 class TestSeekRelativeIsSafe:
-    def test_seek_relative_swallows_player_errors(self, widget: PlaybackWidget):
-        widget.player.active = True
-        widget.player.curr_pos = 2.0
-        widget.player.seek.side_effect = RuntimeError("boom")
+    def test_seek_relative_swallows_player_errors(
+        self, widget: PlaybackWidget, player: Mock
+    ):
+        player.active = True
+        player.curr_pos = 2.0
+        player.seek.side_effect = RuntimeError("boom")
         widget.seek_relative(2)  # must not raise
