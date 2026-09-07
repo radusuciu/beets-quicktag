@@ -3,18 +3,8 @@
 [![CI](https://github.com/radusuciu/beets-quicktag/workflows/CI/badge.svg)](https://github.com/radusuciu/beets-quicktag/actions/workflows/ci.yml)
 [![PyPI version](https://badge.fury.io/py/beets-quicktag.svg)](https://badge.fury.io/py/beets-quicktag)
 [![Python versions](https://img.shields.io/pypi/pyversions/beets-quicktag.svg)](https://pypi.org/project/beets-quicktag/)
-[![codecov](https://codecov.io/gh/radusuciu/beets-quicktag/branch/main/graph/badge.svg)](https://codecov.io/gh/radusuciu/beets-quicktag)
 
-This is a plugin for [beets](https://beets.io/) that scratches my own itch to categorize my music using custom tags, for DJing, as efficiently as possible. If it's not at a 1.0 release, it's probably not stable for use by others, though I'll still try and look at issues if for some reason you've found this (hi!).
-
-It's a work in progress with core functionality implemented. Use the `beet quicktag` command to launch an interactive TUI for quick music tagging. While a track plays, the terminal window title shows its artist and title.
-
-TODO:
-- add tests
-- add rating or energy level widget
-- automate releases
-- test on Windows
-- summarize changes after QuickTag finishes running
+A [beets](https://beets.io/) plugin for tagging tracks with your own categories, as fast as possible. I wrote it to sort my library for DJing. Until 1.0 it may not be stable for others, but I'll still look at issues if you find it (hi!).
 
 ## Requirements
 
@@ -27,23 +17,39 @@ TODO:
 pip install beets-quicktag
 ```
 
-Then add `quicktag` to your plugins list in your beets config:
+Then enable the plugin in your beets config:
 
 ```yaml
 plugins: quicktag
 ```
 
+## Usage
+
+```bash
+beet quicktag [query]
+```
+
+`beet qt` also works. The query is a normal beets query and defaults to the whole library.
+
+This opens a TUI that plays each track and shows a checklist per category, plus a comments field. While a track plays, the terminal title shows its artist and title.
+
+| Key | Action |
+|---|---|
+| `Left` / `Right` | Previous / next track |
+| `/` | Play or pause |
+| `<` / `>` | Seek 5 seconds back / forward |
+| `Escape` | Quit |
+
+Tags are saved when you move to another track, and on quit if `autosave_on_quit` is on. Each category is stored in the beets database as a flexible attribute, with selected values joined by `, `. Audio files are not written to.
 
 ## Configuration
 
-Add a `quicktag` section to your beets `config.yaml`. Here's an example:
+Add a `quicktag` section to your beets `config.yaml`:
 
 ```yaml
 quicktag:
   autoplay_at_launch: yes
   autoplay_on_track_change: no
-  autosave_on_quit: yes
-  keep_audio_device_awake: no
   categories:
     collection:
       - DJ
@@ -56,15 +62,16 @@ quicktag:
       - angry
 ```
 
-### Choppy audio after pausing (WSLg)
+`categories` is required. Names may only contain letters, digits, underscores and hyphens, and cannot start with a digit or clash with a built-in beets field.
 
-Some audio servers suspend the output device a few seconds after the last
-stream is paused, and waking it up again stalls playback for a moment. The
-PulseAudio RDP sink that WSL2 uses is one of them: pause for more than about
-five seconds with nothing else playing, and the first seconds after resuming
-are choppy. Set `keep_audio_device_awake: yes` to work around it. quicktag then
-keeps a muted, looping stream of silence open for as long as it runs, so the
-device never goes idle. Leave it off on systems that resume cleanly.
+| Option | Default | Effect |
+|---|---|---|
+| `autoplay_at_launch` | `no` | Start playing the first track when the app opens. |
+| `autoplay_on_track_change` | `no` | Start playing whenever you move to another track. |
+| `keep_playing_on_track_change_if_playing` | `yes` | If a track is playing when you move on, play the next one too. |
+| `autonext_at_track_end` | `no` | Move to the next track when the current one finishes. |
+| `autosave_on_quit` | `no` | Save the current track's tags on quit. |
+| `keep_audio_device_awake` | `no` | Loop silence at zero volume so the audio device never suspends. Fixes choppy resume on some setups, such as WSLg. |
 
 ## Development
 
@@ -83,34 +90,19 @@ uv run ruff format . # Formatting
 
 ### Release Process
 
-This project uses automated releases via GitHub Actions. To create a new release:
+Releases are automated with GitHub Actions:
 
-1. **Update version** in `pyproject.toml`:
-   ```toml
-   version = "0.2.0"  # Update from current version
-   ```
-
-2. **Commit the version bump**:
-   ```bash
-   git add pyproject.toml
-   git commit -m "chore: bump version to 0.2.0"
-   ```
-
-3. **Create and push a git tag**:
+1. Bump `version` in `pyproject.toml` and commit it.
+2. Tag and push:
    ```bash
    git tag v0.2.0
    git push origin v0.2.0
    ```
-
-4. **Automated release**: GitHub Actions will automatically:
-   - Generate changelog using git-cliff and conventional commits
-   - Build the package
-   - Publish to PyPI
-   - Create a GitHub release with release notes
+3. The workflow builds the package, publishes to PyPI, creates a GitHub release with notes from git-cliff, and commits the updated `CHANGELOG.md` to `main`. Pull before your next change.
 
 ### Commit Convention
 
-Use [conventional commits](https://www.conventionalcommits.org/) for automatic changelog generation:
+Use [conventional commits](https://www.conventionalcommits.org/) so the changelog can be generated:
 - `feat:` - New features
 - `fix:` - Bug fixes
 - `docs:` - Documentation changes
