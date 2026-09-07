@@ -79,9 +79,12 @@ class TestValueBasedSelections:
         self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An unset fixed text field reads back as ""; that is not a change."""
-        app = make_app(temp_beets_library, {"album": ["a", "b"]})
+        app = make_app(temp_beets_library, {"composer": ["a", "b"]})
         stores: list[str] = []
         async with app.run_test():
+            assert (
+                app.query_one("#selection-composer", CustomSelectionList).selected == []
+            )
             monkeypatch.setattr(
                 app.item, "store", lambda *a, **k: stores.append("store")
             )
