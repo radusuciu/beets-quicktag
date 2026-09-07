@@ -126,7 +126,9 @@ class QuickTagApp(App):
     async def on_mount(self) -> None:
         """Called when the app is mounted."""
         self.theme = "gruvbox"
-        await self._set_item(self.item, save_current_item_tags=False)
+        await self._set_item(
+            self.item, save_current_item_tags=False, is_initial_load=True
+        )
         if self.autoplay_at_launch_enabled:
             self.playback_widget.play()
 
@@ -180,8 +182,19 @@ class QuickTagApp(App):
 
         self.playback_widget.load_track(item_path_str)
 
-    async def _set_item(self, item: BeetsItem, save_current_item_tags=True) -> None:
-        """Handle changes to the current item."""
+    async def _set_item(
+        self,
+        item: BeetsItem,
+        save_current_item_tags: bool = True,
+        *,
+        is_initial_load: bool = False,
+    ) -> None:
+        """Handle changes to the current item.
+
+        `is_initial_load` marks the call made from `on_mount`: the launch
+        decision belongs solely to `autoplay_at_launch_enabled` there, so the
+        autoplay-on-track-change branch below is skipped for that call.
+        """
         # Capture the current playback state before changing items
         was_playing_before = self.playback_widget.is_playing()
 
@@ -215,7 +228,7 @@ class QuickTagApp(App):
                 "Continuing playback with new track (was playing before and "
                 "keep_playing_on_track_change_if_playing enabled)"
             )
-        elif self.autoplay_on_track_change_enabled:
+        elif not is_initial_load and self.autoplay_on_track_change_enabled:
             # If autoplay is enabled, start playing regardless of previous state
             should_play = True
             self.log.info("Starting playback due to autoplay_on_track_change setting")

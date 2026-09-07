@@ -85,57 +85,99 @@ class TestQuickTagAppPlaybackConfiguration:
             mock_play.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_autoplay_at_launch_disabled_overrides_track_change_autoplay(
+        self, temp_beets_library: Library, mock_config: dict[str, Any]
+    ):
+        """Test autoplay_at_launch=False wins at mount even when
+        autoplay_on_track_change=True (bug 5): the launch decision belongs
+        solely to on_mount, not to the autoplay-on-track-change branch of
+        _set_item."""
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        config = mock_config.copy()
+        config["autoplay_at_launch"] = False
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=list(config["categories"].items()),
+            autoplay_at_launch_enabled=config["autoplay_at_launch"],
+            autoplay_on_track_change_enabled=True,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        with patch.object(app.playback_widget, "play") as mock_play:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+
+            # Mounting must not start playback: autoplay_at_launch is False
+            # even though autoplay_on_track_change is True.
+            mock_play.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "config_name",
+        [
+            "all_disabled",
+            "all_enabled",
+            "launch_only",
+            "keep_playing",
+            "auto_advance",
+            "track_change_only",
+        ],
+    )
     async def test_autoplay_on_track_change_combinations(
-        self, temp_beets_library: Library, autoplay_configs: dict[str, dict[str, bool]]
+        self,
+        temp_beets_library: Library,
+        autoplay_configs: dict[str, dict[str, bool]],
+        config_name: str,
     ):
         """Test different autoplay_on_track_change combinations."""
         items = list(temp_beets_library.items())
         if len(items) < 2:
             pytest.skip("Need at least 2 items for track change test")
 
-        for _config_name, config in autoplay_configs.items():
-            app = QuickTagApp(
-                lib=temp_beets_library,
-                items=items,
-                categories=[("genre", ["Rock", "Pop"])],
-                autoplay_at_launch_enabled=config["autoplay_at_launch"],
-                autoplay_on_track_change_enabled=config["autoplay_on_track_change"],
-                autonext_at_track_end_enabled=config["autonext_at_track_end"],
-                autosave_on_quit_enabled=False,
-                keep_playing_on_track_change_if_playing_enabled=config[
-                    "keep_playing_on_track_change_if_playing"
-                ],
-            )
+        config = autoplay_configs[config_name]
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=config["autoplay_at_launch"],
+            autoplay_on_track_change_enabled=config["autoplay_on_track_change"],
+            autonext_at_track_end_enabled=config["autonext_at_track_end"],
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=config[
+                "keep_playing_on_track_change_if_playing"
+            ],
+        )
 
-            with patch.object(app, "_save_current_item_tags", new_callable=AsyncMock):
+        with patch.object(app, "_save_current_item_tags", new_callable=AsyncMock):
+            with patch.object(
+                app, "_load_tags_for_current_item", new_callable=AsyncMock
+            ):
                 with patch.object(
-                    app, "_load_tags_for_current_item", new_callable=AsyncMock
+                    app, "_load_current_item_for_playback", new_callable=AsyncMock
                 ):
-                    with patch.object(
-                        app, "_load_current_item_for_playback", new_callable=AsyncMock
-                    ):
-                        with patch.object(app.playback_widget, "play") as mock_play:
-                            with patch.object(
-                                app.playback_widget, "pause"
-                            ) as mock_pause:
-                                with patch.object(
-                                    app.playback_widget,
-                                    "is_playing",
-                                    return_value=False,
-                                ):
-                                    async with app.run_test():
-                                        # on_mount already called _set_item once
-                                        mock_play.reset_mock()
-                                        mock_pause.reset_mock()
-                                        # Navigate to next item
-                                        await app._set_item(items[1])
+                    with patch.object(app.playback_widget, "play") as mock_play:
+                        with patch.object(
+                            app.playback_widget,
+                            "is_playing",
+                            return_value=False,
+                        ):
+                            async with app.run_test():
+                                # on_mount already called _set_item once
+                                mock_play.reset_mock()
+                                # Navigate to next item
+                                await app._set_item(items[1])
 
-                                    if config["autoplay_on_track_change"]:
-                                        mock_play.assert_called()
-                                    else:
-                                        # If not autoplaying, should ensure paused
-                                        if mock_play.called:
-                                            mock_pause.assert_called()
+                            if config["autoplay_on_track_change"]:
+                                mock_play.assert_called()
+                            else:
+                                mock_play.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_keep_playing_on_track_change_when_playing(
