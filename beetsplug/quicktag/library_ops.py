@@ -14,10 +14,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
-from beets.dbcore.query import SubstringQuery
 from beets.library import Item, Library
 
-from .definitions import CategoryDefinitions
 from .item_values import read_item_values, write_item_values
 
 
@@ -40,16 +38,14 @@ def _dedupe(values: list[str]) -> list[str]:
 def _items_with_value(lib: Library, category: str, value: str) -> list[Item]:
     """Tracks whose ``category`` holds ``value`` as a whole token.
 
-    The substring query narrows the scan (in SQL for fixed columns, in Python
-    for flexible attributes, which have no column); the token check then
-    rejects partial matches.
+    Filtered in Python (like ``_items_with_any_value``) so the comparison is
+    exactly ``_same``'s casefold, whole-token match. A SQL/beets-query
+    prefilter would narrow the scan on a different, ASCII-only notion of
+    case-insensitivity and could reject rows ``_same`` would accept.
     """
-    query = SubstringQuery(
-        category, value, fast=CategoryDefinitions.is_fixed_field(category)
-    )
     return [
         item
-        for item in lib.items(query)
+        for item in lib.items()
         if any(_same(token, value) for token in read_item_values(item, category))
     ]
 
@@ -125,8 +121,13 @@ def rename_category(lib: Library, old: str, new: str) -> int:
     """Move every track's ``old`` values into ``new`` and clear ``old``.
 
     ``new`` is written in its own shape (so a string field can become a list
-    field) and merged with anything the track already had there.
+    field) and merged with anything the track already had there. A no-op
+    (exact string equality only) when ``old`` and ``new`` are the same
+    category, so confirming a rename without editing the name never clears
+    the field it would otherwise merge into itself.
     """
+    if old == new:
+        return 0
     changed = 0
     with _migration(lib):
         for item in _items_with_any_value(lib, old):

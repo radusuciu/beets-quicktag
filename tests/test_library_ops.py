@@ -76,6 +76,17 @@ class TestCountTracks:
         assert count_tracks(lib, LIST_FIELD, "House") == 1
         assert count_tracks(lib, LIST_FIELD) == 2
 
+    def test_counts_flexible_attribute_non_ascii_case_insensitively(
+        self, lib: Library
+    ) -> None:
+        add_track(lib, mood="CAFÉ")
+        assert count_tracks(lib, "mood", "café") == 1
+
+    @needs_list_field
+    def test_counts_list_field_non_ascii_case_insensitively(self, lib: Library) -> None:
+        add_track(lib, genres=["CAFÉ"])
+        assert count_tracks(lib, LIST_FIELD, "café") == 1
+
 
 class TestRenameOption:
     def test_renames_whole_token_in_place(self, lib: Library) -> None:
@@ -111,6 +122,21 @@ class TestRenameOption:
         a = add_track(lib, genres=["Hiphop", "House"])
         rename_option(lib, LIST_FIELD, "Hiphop", "Hip-Hop")
         assert lib.get_item(a)[LIST_FIELD] == ["Hip-Hop", "House"]
+
+    def test_renames_flexible_attribute_non_ascii_case_insensitively(
+        self, lib: Library
+    ) -> None:
+        a = add_track(lib, mood="CAFÉ")
+        assert rename_option(lib, "mood", "café", "Cafe") == 1
+        assert value_of(lib, a, "mood") == "Cafe"
+
+    @needs_list_field
+    def test_renames_list_field_non_ascii_case_insensitively(
+        self, lib: Library
+    ) -> None:
+        a = add_track(lib, genres=["CAFÉ"])
+        assert rename_option(lib, LIST_FIELD, "café", "Cafe") == 1
+        assert lib.get_item(a)[LIST_FIELD] == ["Cafe"]
 
     def test_failure_rolls_back_every_track(
         self, lib: Library, monkeypatch: pytest.MonkeyPatch
@@ -192,6 +218,11 @@ class TestRenameCategory:
         rename_category(lib, "genre", LIST_FIELD)
         assert lib.get_item(a)[LIST_FIELD] == ["House", "Techno"]
         assert not lib.get_item(a).get("genre")
+
+    def test_same_name_is_a_no_op(self, lib: Library) -> None:
+        a = add_track(lib, mood="a, b")
+        assert rename_category(lib, "mood", "mood") == 0
+        assert value_of(lib, a, "mood") == "a, b"
 
 
 class TestRemoveCategory:
