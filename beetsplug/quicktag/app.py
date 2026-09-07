@@ -308,7 +308,9 @@ class QuickTagApp(App):
         panel.selection_list.focus()
 
     async def action_quit(self) -> None:
-        """Action to quit the application."""
+        """Escape: cancel an open inline edit if there is one, else quit."""
+        if self._cancel_inline_edit():
+            return
         self.log.info(
             "action_quit called. "
             f"autosave_on_quit_enabled: {self.autosave_on_quit_enabled}"
@@ -317,6 +319,31 @@ class QuickTagApp(App):
             self.log.info("Autosaving tags before quitting.")
             await self._save_current_item_tags()
         self.exit()
+
+    def _cancel_inline_edit(self) -> bool:
+        """Close any open inline input. Returns True if one was open."""
+        if not self.is_running:
+            # No screen is mounted (e.g. action_quit called directly in a
+            # test, outside run_test()); querying would raise
+            # ScreenStackError, and there is nothing open to close anyway.
+            return False
+        for panel in self.query(CategoryPanel):
+            if panel.input_active:
+                panel.close_input()
+                return True
+        try:
+            new_category_input = self._new_category_input()
+        except NoMatches:
+            return False
+        if not new_category_input.display:
+            return False
+        self._close_new_category_input()
+        if self.definitions.categories:
+            try:
+                self._selection_list(self.definitions.categories[0]).focus()
+            except NoMatches:
+                pass
+        return True
 
     async def _load_current_item_for_playback(self) -> None:
         """Load the current item for playback."""

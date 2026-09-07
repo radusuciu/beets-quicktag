@@ -474,3 +474,53 @@ class TestAddCategoryFlow:
             await pilot.pause()
             assert app.definitions.categories == ["mood"]
             assert app.query_one("#panel-mood", CategoryPanel)
+
+
+class TestEscape:
+    @pytest.mark.asyncio
+    async def test_escape_cancels_option_input_and_does_not_quit(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "a", "escape")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.input_active is False
+            assert panel.input.value == ""
+            assert app.focused is panel.selection_list
+            assert app.definitions.options("mood") == ["happy"]
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_escape_cancels_category_input_and_does_not_quit(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "escape")
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is False
+            assert new_input.value == ""
+            assert app.focused is app.query_one("#selection-mood")
+            assert app.definitions.categories == ["mood"]
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_escape_with_nothing_open_quits(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("escape")
+            await pilot.pause()
+        assert app.return_code == 0 or not app.is_running
+
+    @pytest.mark.asyncio
+    async def test_second_escape_quits(self, temp_beets_library: Library) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "escape")
+            assert app.is_running
+            await pilot.press("escape")
+            await pilot.pause()
+        assert not app.is_running
