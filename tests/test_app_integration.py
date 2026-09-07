@@ -16,9 +16,17 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Library
+from textual.widgets import Input, Static
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
+from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
+from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from beetsplug.quicktag.widgets.playback import PlaybackEnded
+
+
+def header_text(app: QuickTagApp) -> str:
+    """Return the text the header Static actually renders."""
+    return app.query_one("#header_text_content", Static).render().plain
 
 
 class TestQuickTagAppPlaybackConfiguration:
@@ -295,12 +303,19 @@ class TestQuickTagAppNavigation:
         # Set to last item
         app.current_item_index = len(items) - 1
 
-        with patch.object(app, "_set_item", new_callable=AsyncMock) as mock_set_item:
-            await app._navigate(NavigateDirection.FORWARD)
+        with (
+            patch.object(app, "_set_item", new_callable=AsyncMock) as mock_set_item,
+            patch.object(
+                app, "_save_current_item_tags", new_callable=AsyncMock
+            ) as mock_save,
+        ):
+            moved = await app._navigate(NavigateDirection.FORWARD)
 
-            # Should not change index
+            # Should not change index, but must still save the last item
+            assert moved is False
             assert app.current_item_index == len(items) - 1
             mock_set_item.assert_not_called()
+            mock_save.assert_called_once()
 
             # Should show completion message
             # Note: This updates the header display directly
@@ -332,6 +347,40 @@ class TestQuickTagAppNavigation:
             # Should not change index
             assert app.current_item_index == 0
             mock_set_item.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_navigating_past_last_item_saves_tags(
+        self, temp_beets_library: Library
+    ):
+        """Pressing Right on the last item must persist that item's tags."""
+        items = list(temp_beets_library.items())
+        if len(items) < 2:
+            pytest.skip("Need at least 2 items for navigation test")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,  # No safety net on quit
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+        last_item_id = items[-1].id
+
+        async with app.run_test() as pilot:
+            for _ in range(len(items) - 1):
+                await pilot.press("right")
+            assert app.current_item_index == len(items) - 1
+
+            app.query_one("#selection-genre", CustomSelectionList).select(0)
+
+            await pilot.press("right")
+
+            assert app.current_item_index == len(items) - 1
+            assert "All items processed" in header_text(app)
+            assert temp_beets_library.get_item(last_item_id).get("genre") == "Rock"
 
 
 class TestQuickTagAppPlaybackActions:
@@ -450,7 +499,9 @@ class TestQuickTagAppPlaybackEndedHandling:
         app.current_item_index = 0
 
         with (
-            patch.object(app, "_navigate", new_callable=AsyncMock) as mock_navigate,
+            patch.object(
+                app, "_navigate", new_callable=AsyncMock, return_value=True
+            ) as mock_navigate,
             patch.object(app.playback_widget, "play") as mock_play,
         ):
             await app.on_playback_ended(PlaybackEnded())
@@ -511,13 +562,48 @@ class TestQuickTagAppPlaybackEndedHandling:
         app.current_item_index = len(items) - 1
 
         with (
-            patch.object(app, "_navigate", new_callable=AsyncMock) as mock_navigate,
+            patch.object(
+                app, "_navigate", new_callable=AsyncMock, return_value=False
+            ) as mock_navigate,
             patch.object(app.playback_widget, "play") as mock_play,
         ):
             await app.on_playback_ended(PlaybackEnded())
 
-            # Nothing to advance to; stay on the last item, stopped
-            mock_navigate.assert_not_called()
+            # _navigate handles the end of the list (saving and reporting);
+            # nothing to advance to, so playback must not restart
+            mock_navigate.assert_called_once_with(NavigateDirection.FORWARD)
+            mock_play.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_playback_ended_at_last_item_shows_completion(
+        self, temp_beets_library: Library
+    ):
+        """Auto-advancing past the last item must report that we are done."""
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=True,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test():
+            app.current_item_index = len(items) - 1
+            app.item = items[-1]
+
+            with patch.object(app.playback_widget, "play") as mock_play:
+                await app.on_playback_ended(PlaybackEnded())
+
+            assert app.current_item_index == len(items) - 1
+            assert "All items processed" in header_text(app)
+            # The last track must not restart in a loop
             mock_play.assert_not_called()
 
 
@@ -697,3 +783,128 @@ class TestQuickTagAppRealPlaybackIntegration:
 
                     # Should handle rapid changes without errors
                     assert app.current_item_index > 0
+
+
+class TestQuickTagAppMarkupSafety:
+    """Bracketed text from metadata and config must render literally."""
+
+    @pytest.mark.asyncio
+    async def test_header_renders_bracketed_title_literally(
+        self, temp_beets_library: Library
+    ):
+        """A title like 'Foo [feat. Bar]' must not crash or lose the brackets."""
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        items[0].title = "Foo [feat. Bar]"
+        items[0].store()
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test():
+            assert "Foo [feat. Bar]" in header_text(app)
+
+    @pytest.mark.asyncio
+    async def test_option_text_with_brackets_renders_literally(
+        self, temp_beets_library: Library
+    ):
+        """Category options come from user config and may contain brackets."""
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["lo-fi [chill]", "Rock"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test():
+            selection_list = app.query_one("#selection-genre", CustomSelectionList)
+            prompt = selection_list.get_option_at_index(0).prompt
+            assert prompt.plain == "lo-fi [chill]"
+
+
+class TestQuickTagAppNavigationBindings:
+    """Left/Right must navigate tracks without stealing keys from the input."""
+
+    @pytest.mark.asyncio
+    async def test_left_moves_cursor_in_comments_input(
+        self, temp_beets_library: Library
+    ):
+        """With the comments input focused, Left moves the cursor, not the track."""
+        items = list(temp_beets_library.items())
+        if len(items) < 2:
+            pytest.skip("Need at least 2 items for navigation test")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test() as pilot:
+            # Move off the first item so that Left would visibly change track.
+            await pilot.press("right")
+            assert app.current_item_index == 1
+
+            comments_input = app.query_one("#comments-input", InputWithLabel).query_one(
+                Input
+            )
+            comments_input.value = "hello"
+            comments_input.focus()
+            await pilot.pause()
+            comments_input.cursor_position = 3
+
+            await pilot.press("left")
+
+            assert comments_input.cursor_position == 2
+            assert app.current_item_index == 1
+
+    @pytest.mark.asyncio
+    async def test_right_advances_track_from_selection_list(
+        self, temp_beets_library: Library
+    ):
+        """With a selection list focused, Right still moves to the next track."""
+        items = list(temp_beets_library.items())
+        if len(items) < 2:
+            pytest.skip("Need at least 2 items for navigation test")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test() as pilot:
+            app.query_one("#selection-genre", CustomSelectionList).focus()
+            await pilot.pause()
+
+            await pilot.press("right")
+
+            assert app.current_item_index == 1

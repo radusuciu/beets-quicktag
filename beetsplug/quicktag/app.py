@@ -6,6 +6,7 @@ from beets.library import Library as BeetsLibrary
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.content import Content
 from textual.dom import NoMatches
 from textual.widgets import Footer, Static
 from textual.widgets.selection_list import Selection
@@ -43,7 +44,9 @@ class HeaderWidget(Vertical):
     def __init__(self, playback_widget: PlaybackWidget, item=None, **kwargs):
         super().__init__(**kwargs)
         self.item: BeetsItem = item
-        self._header_text_display = Static(id="header_text_content")
+        # markup=False: titles and status messages are literal text, and
+        # real-world metadata contains brackets (e.g. "Song [feat. X]").
+        self._header_text_display = Static(id="header_text_content", markup=False)
         self.playback_widget = playback_widget
 
     def compose(self) -> ComposeResult:
@@ -70,8 +73,10 @@ class HeaderWidget(Vertical):
 class QuickTagApp(App):
     BINDINGS = [
         Binding("escape", "quit", "Quit", show=True, priority=True),
-        Binding("left", "previous_item", "Previous", show=True, priority=True),
-        Binding("right", "next_item", "Next", show=True, priority=True),
+        # No priority: the focused widget wins first, so Left/Right move the
+        # cursor inside the comments input instead of changing track.
+        Binding("left", "previous_item", "Previous", show=True),
+        Binding("right", "next_item", "Next", show=True),
         ("/", "play_pause_current_item", "Play/Pause"),
         ("<", "seek_backward(5)", "Seek -5s"),
         (">", "seek_forward(5)", "Seek +5s"),
@@ -140,13 +145,13 @@ class QuickTagApp(App):
         if self.item:
             for category_name, options in self.categories:
                 selection_options = [
-                    Selection(option_text, option_idx)
+                    Selection(Content(option_text), option_idx)
                     for option_idx, option_text in enumerate(options)
                 ]
                 category_selection_list = CustomSelectionList(
                     *selection_options, id=f"selection-{category_name}"
                 )
-                category_selection_list.border_title = category_name
+                category_selection_list.border_title = Content(category_name)
                 yield category_selection_list
             yield InputWithLabel(input_label="Comments:", id="comments-input")
         else:
@@ -234,12 +239,16 @@ class QuickTagApp(App):
             if self.playback_widget.is_playing():
                 self.playback_widget.pause()
 
-    async def _navigate(self, direction: NavigateDirection) -> None:
-        """Navigates through the items list in the specified direction."""
+    async def _navigate(self, direction: NavigateDirection) -> bool:
+        """Navigates through the items list in the specified direction.
+
+        Returns True if the current item changed, False if we were already at
+        the end the caller asked to move past.
+        """
         # TODO: Do we need this?
         # TODO: should be exception?
         if not self.item:
-            return
+            return False
 
         # TODO: do we stop here or elsewhere?
         # self.playback_widget.stop()
@@ -249,16 +258,19 @@ class QuickTagApp(App):
             if self.current_item_index < len(self.items) - 1:
                 self.current_item_index += 1
             else:
+                # There is nowhere to move to, but the last item's tags would
+                # otherwise never be saved (only moving off an item saves it).
+                await self._save_current_item_tags()
                 self.header_widget._header_text_display.update(
                     "All items processed. Press Esc to quit."
                 )
-                return
+                return False
         elif direction == NavigateDirection.BACKWARD:
             if self.current_item_index > 0:
                 self.current_item_index -= 1
             else:
                 # We don't want to loop back to the last item
-                return
+                return False
         else:
             # this should never happen...
             error_message = (
@@ -270,6 +282,7 @@ class QuickTagApp(App):
             raise ValueError(error_message)
 
         await self._set_item(self.items[self.current_item_index])
+        return True
 
     async def action_next_item(self) -> None:
         """Saves tags for the current item and moves to the next item."""
@@ -314,12 +327,15 @@ class QuickTagApp(App):
             # play again restarts it.
             return
 
-        if self.current_item_index >= len(self.items) - 1:
+        self.log.info("Advancing to next item because the track ended.")
+        moved = await self._navigate(NavigateDirection.FORWARD)
+
+        if not moved:
+            # _navigate saved the last item and showed the completion message;
+            # replaying here would loop the track that just ended.
             self.log.info("Track ended, but already at the last item.")
             return
 
-        self.log.info("Advancing to next item because the track ended.")
-        await self._navigate(NavigateDirection.FORWARD)
         # The track that just ended no longer counts as "playing", so _set_item
         # would leave the new one paused; auto-advance means keep listening.
         self.playback_widget.play()
