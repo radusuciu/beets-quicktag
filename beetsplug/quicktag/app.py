@@ -142,6 +142,10 @@ class QuickTagApp(App):
 
         self.current_item_index = 0
         self.item = items[0] if items else None
+        # Stored values the model refuses as options (e.g. they contain a
+        # comma). Kept per category so a save writes them back untouched
+        # instead of deleting them from the track.
+        self._unadoptable_values: dict[str, list[str]] = {}
         self.playback_widget = PlaybackWidget(
             keep_audio_device_awake=keep_audio_device_awake_enabled
         )
@@ -578,6 +582,10 @@ class QuickTagApp(App):
                 for option in self.definitions.options(category_name)
                 if option in selected
             ]
+            # Values the track carries that could never become options are
+            # not selectable, so they must be re-added here or the write
+            # below would drop them.
+            selected_values.extend(self._unadoptable_values.get(category_name, []))
             if write_item_values(self.item, category_name, selected_values):
                 self.log.info(
                     f"Updating {category_name} to {selected_values!r} "
@@ -634,6 +642,7 @@ class QuickTagApp(App):
         if not self.item:
             return
 
+        self._unadoptable_values = {}
         for category_name in self.definitions.categories:
             try:
                 selection_list = self._selection_list(category_name)
@@ -648,7 +657,16 @@ class QuickTagApp(App):
             known_options = set(self.definitions.options(category_name))
             for value in read_item_values(self.item, category_name):
                 if value not in known_options:
+                    # A value differing only by case is the known option, so
+                    # select that one rather than adopting a near-duplicate.
+                    existing = self.definitions.find_option(category_name, value)
+                    if existing is not None:
+                        selection_list.select(existing)
+                        continue
                     if not self._adopt_option(category_name, value):
+                        self._unadoptable_values.setdefault(category_name, []).append(
+                            value
+                        )
                         continue
                     known_options.add(value)
                 selection_list.select(value)

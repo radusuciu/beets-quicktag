@@ -150,11 +150,10 @@ class TestAdoptingUnknownValues:
         assert temp_beets_library.get_item(item.id).get("mood") == "Jazzy"
 
     @pytest.mark.asyncio
-    async def test_case_variant_of_known_option_is_not_adopted(
+    async def test_case_variant_selects_the_existing_option(
         self, temp_beets_library: Library
     ) -> None:
-        """'HAPPY' collides case-insensitively with 'happy'; it is logged and
-        left unselected rather than crashing the load."""
+        """'HAPPY' is the stored 'happy'; it selects it instead of being lost."""
         item = next(iter(temp_beets_library.items()))
         item["mood"] = "HAPPY"
         item.store()
@@ -162,7 +161,47 @@ class TestAdoptingUnknownValues:
         async with app.run_test():
             lst = app.query_one("#selection-mood", CustomSelectionList)
             assert lst.option_count == 1
-            assert lst.selected == []
+            assert lst.selected == ["happy"]
+            await app._save_current_item_tags()
+        assert temp_beets_library.get_item(item.id).get("mood") == "happy"
+
+    @needs_list_field
+    @pytest.mark.asyncio
+    async def test_unadoptable_list_value_survives_save(
+        self, temp_beets_library: Library
+    ) -> None:
+        """A stored list entry with a comma cannot become an option, but it
+        must still round-trip untouched."""
+        item = next(iter(temp_beets_library.items()))
+        item[LIST_FIELD] = ["House", "Deep, Dark"]
+        item.store()
+        app = make_app(temp_beets_library, {LIST_FIELD: ["House"]})
+        async with app.run_test():
+            lst = app.query_one(f"#selection-{LIST_FIELD}", CustomSelectionList)
+            assert lst.option_count == 1
+            assert lst.selected == ["House"]
+            await app._save_current_item_tags()
+        stored = temp_beets_library.get_item(item.id)[LIST_FIELD]
+        assert sorted(stored) == ["Deep, Dark", "House"]
+
+    @pytest.mark.asyncio
+    async def test_several_unknown_values_are_all_adopted_in_order(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "Jazzy, Funky"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test():
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            assert app.definitions.options("mood") == ["happy", "Jazzy", "Funky"]
+            assert sorted(lst.selected) == ["Funky", "Jazzy"]
+        assert read_definitions_file(path).options("mood") == [
+            "happy",
+            "Jazzy",
+            "Funky",
+        ]
 
 
 class TestPersistDefinitions:

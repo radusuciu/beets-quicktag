@@ -109,6 +109,38 @@ class TestOptionRules:
             defs.add_option("nope", "x")
 
 
+class TestFindOption:
+    @pytest.fixture
+    def defs(self) -> CategoryDefinitions:
+        d = CategoryDefinitions()
+        d.add_category("mood")
+        d.add_option("mood", "happy")
+        d.add_option("mood", "Jazzy")
+        return d
+
+    def test_finds_exact_value(self, defs: CategoryDefinitions) -> None:
+        assert defs.find_option("mood", "happy") == "happy"
+
+    @pytest.mark.parametrize("value", ["HAPPY", "Happy", "hApPy"])
+    def test_finds_case_variant_and_returns_the_stored_spelling(
+        self, defs: CategoryDefinitions, value: str
+    ) -> None:
+        assert defs.find_option("mood", value) == "happy"
+
+    def test_keeps_the_stored_capitalization(self, defs: CategoryDefinitions) -> None:
+        assert defs.find_option("mood", "jazzy") == "Jazzy"
+
+    def test_ignores_surrounding_whitespace(self, defs: CategoryDefinitions) -> None:
+        assert defs.find_option("mood", "  happy ") == "happy"
+
+    def test_returns_none_for_unknown_value(self, defs: CategoryDefinitions) -> None:
+        assert defs.find_option("mood", "calm") is None
+
+    def test_unknown_category_raises(self, defs: CategoryDefinitions) -> None:
+        with pytest.raises(ValueError, match="No category named 'nope'"):
+            defs.find_option("nope", "happy")
+
+
 class TestRenameAndRemove:
     @pytest.fixture
     def defs(self) -> CategoryDefinitions:

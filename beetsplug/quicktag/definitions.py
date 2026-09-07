@@ -39,6 +39,16 @@ class CategoryDefinitions:
         """Option values of ``category`` in display order (a copy)."""
         return list(self._require_category(category))
 
+    def find_option(self, category: str, value: str) -> str | None:
+        """The option of ``category`` matching ``value`` case-insensitively.
+
+        Returns the *stored* spelling (so a track holding ``HAPPY`` maps onto
+        the defined ``happy``), or ``None`` when nothing matches.
+        """
+        options = self._require_category(category)
+        index = self._find_case_insensitive(options, value.strip())
+        return None if index is None else options[index]
+
     # ---- construction from / export to a plain mapping -----------------------
 
     @classmethod
