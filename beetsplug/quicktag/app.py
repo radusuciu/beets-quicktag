@@ -13,7 +13,14 @@ from textual.widgets.selection_list import Selection
 
 from .widgets.custom_selection_list import CustomSelectionList
 from .widgets.input_with_label import InputWithLabel
-from .widgets.playback import PlaybackEnded, PlaybackWidget
+from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidget
+
+# Terminal window title whenever nothing is audibly playing.
+FALLBACK_TERMINAL_TITLE = "Beets QuickTag"
+
+# Control characters (C0 plus DEL) in metadata could terminate or extend the
+# OSC escape sequence used to set the terminal title, so they are stripped.
+_CONTROL_CHARS = dict.fromkeys((*range(0x20), 0x7F))
 
 
 class NavigateDirection(Enum):
@@ -131,6 +138,7 @@ class QuickTagApp(App):
     async def on_mount(self) -> None:
         """Called when the app is mounted."""
         self.theme = "gruvbox"
+        self._set_terminal_title(FALLBACK_TERMINAL_TITLE)
         await self._set_item(
             self.item, save_current_item_tags=False, is_initial_load=True
         )
@@ -140,6 +148,31 @@ class QuickTagApp(App):
     async def on_unmount(self) -> None:
         """Called when the app is unmounted."""
         self.log.info("QuickTagApp unmounted.")
+        # The original title cannot be restored portably; leave the fallback
+        # rather than the last song. Most shells reset it at the next prompt.
+        self._set_terminal_title(FALLBACK_TERMINAL_TITLE)
+
+    def on_playback_state_changed(self, message: PlaybackStateChanged) -> None:
+        """Show the playing track in the terminal title, else the fallback."""
+        if message.playing and self.item:
+            song = f"{self.item.artist} - {self.item.title}"
+            self._set_terminal_title(song.translate(_CONTROL_CHARS))
+        else:
+            self._set_terminal_title(FALLBACK_TERMINAL_TITLE)
+
+    def _set_terminal_title(self, text: str) -> None:
+        """Set the terminal window title with an OSC 0 escape sequence.
+
+        Textual 3.x has no terminal-title API (App.title only feeds the Header
+        widget), so the sequence is written through the driver, where it is
+        queued with frame output instead of interleaving with a partial render.
+        The driver attribute is private to Textual; this is the only place
+        that touches it.
+        """
+        driver = self._driver
+        if driver is None:
+            return
+        driver.write(f"\x1b]0;{text}\x07")
 
     def compose(self) -> ComposeResult:
         yield self.header_widget

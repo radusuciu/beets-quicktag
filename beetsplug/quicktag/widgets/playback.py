@@ -23,6 +23,19 @@ class PlaybackEnded(Message):
         self.generation = generation
 
 
+class PlaybackStateChanged(Message):
+    """Posted when playback starts or stops being audible.
+
+    Posted only on a real transition, so repeated play() calls while already
+    playing stay quiet. `playing` is True when audio is playing and False when
+    it is paused, stopped, or has reached the end of the track.
+    """
+
+    def __init__(self, playing: bool) -> None:
+        super().__init__()
+        self.playing = playing
+
+
 class PlaybackWidget(Widget):
     DEFAULT_CSS = """
     PlaybackWidget {
@@ -44,6 +57,9 @@ class PlaybackWidget(Widget):
         # PlaybackEnded posted for an earlier playback can be recognised as
         # stale. See PlaybackEnded.
         self._playback_generation: int = 0
+        # Last playing state announced via PlaybackStateChanged, so the
+        # message is only posted when the state actually flips.
+        self._reported_playing: bool = False
 
         self.player: Playback | None
         try:
@@ -61,6 +77,13 @@ class PlaybackWidget(Widget):
     def playback_generation(self) -> int:
         """Identifier of the current playback, for stale-message detection."""
         return self._playback_generation
+
+    def _report_playing(self, playing: bool) -> None:
+        """Post PlaybackStateChanged if `playing` differs from the last report."""
+        if playing == self._reported_playing:
+            return
+        self._reported_playing = playing
+        self.post_message(PlaybackStateChanged(playing))
 
     async def on_mount(self) -> None:
         # Start a timer to check for end-of-file conditions since
@@ -83,6 +106,7 @@ class PlaybackWidget(Widget):
             self.log.info(f"just_playback: End of file - {self._current_path}")
             self._playback_progress.mark_ended()
             self.post_message(PlaybackEnded(self._playback_generation))
+            self._report_playing(False)
         else:
             self._was_playing = bool(self.player.playing)
 
@@ -127,6 +151,9 @@ class PlaybackWidget(Widget):
             self._current_path = new_path
             self._playback_generation += 1
             self._playback_progress.clear_ended()
+            # load_file() tears down the previous stream, so whatever was
+            # playing has stopped.
+            self._report_playing(False)
             self.log.info(f"just_playback: Loaded track {new_path}")
         else:
             self.log.info(f"just_playback: Track {new_path} already loaded.")
@@ -150,6 +177,7 @@ class PlaybackWidget(Widget):
         # posted for the track that was playing until now is dropped as stale
         # instead of advancing a second time.
         self._playback_generation += 1
+        self._report_playing(False)
 
         try:
             self.notify(
@@ -195,6 +223,7 @@ class PlaybackWidget(Widget):
             # interval is still noticed by _check_eof.
             self._was_playing = True
             self._playback_progress.clear_ended()
+            self._report_playing(True)
         except Exception as e:
             self.log.error(
                 f"just_playback: Error during play for {self._current_path}: {e}"
@@ -215,6 +244,7 @@ class PlaybackWidget(Widget):
                 f"just_playback: Paused playback for {self._current_path}. "
                 f"Player pause state: {self.player.paused}"
             )
+            self._report_playing(False)
         except Exception as e:
             self.log.error(
                 f"just_playback: Error during pause for {self._current_path}: {e}"
@@ -250,6 +280,7 @@ class PlaybackWidget(Widget):
         # _handle_load_failure.
         self._playback_generation += 1
         self._playback_progress.clear_ended()
+        self._report_playing(False)
 
     def seek_relative(self, seconds: int) -> None:
         if (
