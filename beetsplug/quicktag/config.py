@@ -11,7 +11,7 @@ message instead.
 import re
 
 from beets import ui
-from beets.dbcore.types import String
+from beets.dbcore.types import DelimitedString, String
 from beets.library import Item
 
 # Textual widget IDs must match this pattern; category names are used
@@ -24,7 +24,7 @@ _RESERVED_NAMES = {"comments"}
 
 
 def validate_categories(
-    categories_config: dict[str, object],
+    categories_config: dict[object, object],
 ) -> list[tuple[str, list[str]]]:
     """Validate the ``quicktag.categories`` config mapping.
 
@@ -45,9 +45,9 @@ def validate_categories(
     validated: list[tuple[str, list[str]]] = []
 
     for name, options in categories_config.items():
-        if not _NAME_PATTERN.match(name):
+        if not isinstance(name, str) or not _NAME_PATTERN.fullmatch(name):
             raise ui.UserError(
-                f"quicktag: invalid category name '{name}': category names "
+                f"quicktag: invalid category name {name!r}: category names "
                 "must contain only letters, digits, underscores and hyphens "
                 "and not start with a digit."
             )
@@ -60,10 +60,15 @@ def validate_categories(
 
         field_type = fixed_fields.get(name)
         if field_type is not None and not isinstance(field_type, String):
+            reason = (
+                "which is a list-valued field"
+                if isinstance(field_type, DelimitedString)
+                else "which is not a text field"
+            )
             raise ui.UserError(
                 f"quicktag: category name '{name}' collides with the "
                 f"built-in beets field '{name}' ({type(field_type).__name__}), "
-                "which is not a text field; choose a different category name."
+                f"{reason}; choose a different category name."
             )
 
         if isinstance(options, str):

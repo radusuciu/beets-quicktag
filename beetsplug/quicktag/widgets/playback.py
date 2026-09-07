@@ -244,6 +244,12 @@ class PlaybackWidget(Widget):
 
         self._was_playing = False
         self._current_path = None
+        # A stop is a track change too: bump the generation so a stale EOF
+        # posted for the playback we just stopped is dropped, and clear the
+        # progress display's ended marker for consistency with
+        # _handle_load_failure.
+        self._playback_generation += 1
+        self._playback_progress.clear_ended()
 
     def seek_relative(self, seconds: int) -> None:
         if (
