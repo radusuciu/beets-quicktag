@@ -13,7 +13,7 @@ from textual.message import Message
 from textual.widgets import Input
 from textual.widgets.selection_list import Selection
 
-from .custom_selection_list import CustomSelectionList
+from .custom_selection_list import CustomSelectionList, EditKind
 from .inline_input import InlineInput
 
 OPTION_PLACEHOLDER = "New option, Enter to add, Esc to cancel"
@@ -118,11 +118,12 @@ class CategoryPanel(Vertical):
 
     # ---- messages ----------------------------------------------------------------
 
-    def on_custom_selection_list_add_option_requested(
-        self, message: CustomSelectionList.AddOptionRequested
+    def on_custom_selection_list_edit_requested(
+        self, message: CustomSelectionList.EditRequested
     ) -> None:
         message.stop()
-        self.open_input()
+        if message.kind is EditKind.ADD_OPTION:
+            self.open_input()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         # Stop here so the app's handler only ever sees its own new-category
