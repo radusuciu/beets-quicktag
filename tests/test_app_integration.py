@@ -16,7 +16,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Library
-from textual.widgets import Input, Static
+from textual.widgets import Footer, Input, Static
+from textual.widgets._footer import FooterKey
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
@@ -959,6 +960,74 @@ class TestQuickTagAppNavigationBindings:
             await pilot.press("right")
 
             assert app.current_item_index == 1
+
+    @pytest.mark.asyncio
+    async def test_footer_lists_previous_next_with_selection_list_focused(
+        self, temp_beets_library: Library
+    ):
+        """The footer must advertise Left/Right while a selection list has focus.
+
+        SelectionList inherits hidden scroll bindings for those keys; without an
+        override they shadow the App's Previous/Next entries in the footer even
+        though the key presses still reach the App.
+        """
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test() as pilot:
+            app.query_one("#selection-genre", CustomSelectionList).focus()
+            await pilot.pause()
+
+            shown = {
+                key: active.binding.description
+                for key, active in app.active_bindings.items()
+                if active.binding.show
+            }
+            assert shown.get("left") == "Previous"
+            assert shown.get("right") == "Next"
+
+            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+            assert {"left", "right"} <= footer_keys
+
+    @pytest.mark.asyncio
+    async def test_footer_hides_previous_next_with_comments_input_focused(
+        self, temp_beets_library: Library
+    ):
+        """With the comments input focused, Left/Right move the cursor, so the
+        footer must not advertise them as Previous/Next."""
+        items = list(temp_beets_library.items())
+        if not items:
+            pytest.skip("No items in test library")
+
+        app = QuickTagApp(
+            lib=temp_beets_library,
+            items=items,
+            categories=[("genre", ["Rock", "Pop"])],
+            autoplay_at_launch_enabled=False,
+            autoplay_on_track_change_enabled=False,
+            autonext_at_track_end_enabled=False,
+            autosave_on_quit_enabled=False,
+            keep_playing_on_track_change_if_playing_enabled=False,
+        )
+
+        async with app.run_test() as pilot:
+            app.query_one("#comments-input", InputWithLabel).query_one(Input).focus()
+            await pilot.pause()
+
+            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+            assert not ({"left", "right"} & footer_keys)
 
 
 class TestTerminalTitle:
