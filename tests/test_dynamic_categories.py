@@ -11,6 +11,7 @@ from beets.library import Library
 from beetsplug.quicktag.app import QuickTagApp
 from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.definitions_file import read_definitions_file
+from beetsplug.quicktag.widgets.category_panel import CategoryPanel
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 
 LIST_FIELD = "genres"
@@ -176,3 +177,114 @@ class TestPersistDefinitions:
             pass
         assert app.definitions.options("mood") == ["happy", "Jazzy"]
         assert not path.exists()
+
+
+class TestCategoryPanelLayout:
+    @pytest.mark.asyncio
+    async def test_each_category_is_a_panel_with_list_and_hidden_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test():
+            panels = list(app.query(CategoryPanel))
+            assert [p.id for p in panels] == ["panel-mood", "panel-vibe"]
+            mood = app.query_one("#panel-mood", CategoryPanel)
+            assert mood.selection_list.id == "selection-mood"
+            assert str(mood.border_title) == "mood"
+            assert mood.input.display is False
+            assert mood.input_active is False
+
+    @pytest.mark.asyncio
+    async def test_first_list_has_focus_on_mount(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test():
+            assert app.focused is app.query_one("#selection-mood")
+
+
+class TestPlusOpensInlineInput:
+    @pytest.mark.asyncio
+    async def test_plus_reveals_and_focuses_input_of_focused_panel(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-vibe", CustomSelectionList).focus()
+            await pilot.press("plus")
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            mood = app.query_one("#panel-mood", CategoryPanel)
+            assert vibe.input_active is True
+            assert app.focused is vibe.input
+            assert vibe.input.value == ""
+            assert mood.input_active is False
+
+    @pytest.mark.asyncio
+    async def test_plus_is_typed_into_the_open_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        """The binding lives on the list, so it never fires from an Input."""
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus")
+            await pilot.press("plus")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.input.value == "+"
+
+    @pytest.mark.asyncio
+    async def test_plus_is_listed_in_footer_with_list_focused(
+        self, temp_beets_library: Library
+    ) -> None:
+        from textual.widgets import Footer
+        from textual.widgets._footer import FooterKey
+
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+            assert "plus" in keys
+
+    @pytest.mark.asyncio
+    async def test_close_input_hides_clears_and_refocuses_list(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "x")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.close_input()
+            await pilot.pause()
+            assert panel.input_active is False
+            assert panel.input.value == ""
+            assert app.focused is panel.selection_list
+
+    @pytest.mark.asyncio
+    async def test_show_error_keeps_input_open_with_message(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "x")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.show_error("Nope.")
+            await pilot.pause()
+            assert panel.input_active is True
+            assert panel.input.value == ""
+            assert panel.input.placeholder == "Nope."
+            assert app.focused is panel.input
+
+    @pytest.mark.asyncio
+    async def test_add_option_appends_highlights_and_optionally_selects(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test():
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.add_option("sad", select=True)
+            panel.add_option("calm", select=False)
+            lst = panel.selection_list
+            assert [
+                str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)
+            ] == ["happy", "sad", "calm"]
+            assert lst.highlighted == 2
+            assert lst.selected == ["sad"]

@@ -7,14 +7,13 @@ from beets.library import Library as BeetsLibrary
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.content import Content
 from textual.dom import NoMatches
 from textual.widgets import Footer, Input, Static
-from textual.widgets.selection_list import Selection
 
 from .definitions import CategoryDefinitions
 from .definitions_file import write_definitions_file
 from .item_values import read_item_values, write_item_values
+from .widgets.category_panel import CategoryPanel
 from .widgets.custom_selection_list import CustomSelectionList
 from .widgets.input_with_label import InputWithLabel
 from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidget
@@ -103,13 +102,6 @@ class QuickTagApp(App):
     Screen {
         align: center middle;
     }
-
-    SelectionList {
-        padding: 1;
-        border: solid $accent;
-        /* width: 80%; */
-        /* height: 80%; */
-    }
     """
 
     def __init__(
@@ -193,6 +185,10 @@ class QuickTagApp(App):
         """The list widget for ``category``; raises ``NoMatches``."""
         return self.query_one(f"#selection-{category}", CustomSelectionList)
 
+    def _panel(self, category: str) -> CategoryPanel:
+        """The panel for ``category``; raises ``NoMatches``."""
+        return self.query_one(f"#panel-{category}", CategoryPanel)
+
     def _persist_definitions(self) -> None:
         """Write the definitions file if one is configured.
 
@@ -213,15 +209,9 @@ class QuickTagApp(App):
 
         if self.item:
             for category_name in self.definitions.categories:
-                selection_options = [
-                    Selection(Content(option_text), option_text)
-                    for option_text in self.definitions.options(category_name)
-                ]
-                category_selection_list = CustomSelectionList(
-                    *selection_options, id=f"selection-{category_name}"
+                yield CategoryPanel(
+                    category_name, self.definitions.options(category_name)
                 )
-                category_selection_list.border_title = Content(category_name)
-                yield category_selection_list
             yield InputWithLabel(input_label="Comments:", id="comments-input")
         else:
             yield Static("No items to tag.")
@@ -594,9 +584,7 @@ class QuickTagApp(App):
             return False
         self._persist_definitions()
         try:
-            self._selection_list(category_name).add_option(
-                Selection(Content(value), value)
-            )
+            self._panel(category_name).add_option(value, select=False)
         except NoMatches:
             pass
         return True
