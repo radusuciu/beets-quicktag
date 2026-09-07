@@ -216,6 +216,11 @@ class QuickTagApp(App):
             self.log.error(
                 f"Could not write categories file {self.definitions_path}: {error}"
             )
+            # The log goes nowhere in a real session, and the user would
+            # otherwise believe the category was saved for next time.
+            self.header_widget._header_text_display.update(
+                f"Could not write categories file: {self.definitions_path}"
+            )
 
     def compose(self) -> ComposeResult:
         yield self.header_widget

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from beets.library import Library
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
 from beetsplug.quicktag.app import QuickTagApp
 from beetsplug.quicktag.definitions import CategoryDefinitions
@@ -215,9 +215,10 @@ class TestPersistDefinitions:
         path = tmp_path / "missing" / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
         async with app.run_test():
-            pass
+            header = app.query_one("#header_text_content", Static).render().plain
         assert app.definitions.options("mood") == ["happy", "Jazzy"]
         assert not path.exists()
+        assert "Could not write categories file" in header
 
 
 class TestCategoryPanelLayout:
