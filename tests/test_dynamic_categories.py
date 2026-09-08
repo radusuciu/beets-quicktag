@@ -6,7 +6,7 @@ Every test builds the app against the scratch library from ``conftest.py``.
 from pathlib import Path
 
 import pytest
-from beets.library import Library
+from beets.library import Item, Library
 from textual.widgets import Input, Static
 
 from beetsplug.quicktag.app import QuickTagApp
@@ -233,6 +233,55 @@ class TestPersistDefinitions:
         assert app.definitions.options("mood") == ["happy", "Jazzy"]
         assert not path.exists()
         assert "Could not write categories file" in header
+
+
+class TestSaveErrors:
+    @pytest.mark.asyncio
+    async def test_store_failure_is_shown_after_the_track_changes(
+        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).select("happy")
+
+            def fail(*_args: object, **_kwargs: object) -> None:
+                raise OSError("disk full")
+
+            # Setting an attribute on an Item makes a flex attr, so patch the
+            # class rather than the instance.
+            monkeypatch.setattr(Item, "store", fail)
+            await pilot.press("right")
+            await pilot.pause()
+            assert app.current_item_index == 1
+            header = app.query_one("#header_text_content", Static).render().plain
+            assert "Could not save" in header
+            assert "disk full" in header
+
+    @pytest.mark.asyncio
+    async def test_one_bad_field_does_not_stop_the_save(
+        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from beetsplug.quicktag import app as app_module
+
+        real_write = app_module.write_item_values
+
+        def write(item: object, category: str, values: list[str]) -> bool:
+            if category == "mood":
+                raise KeyError("computed field mood cannot be deleted")
+            return real_write(item, category, values)
+
+        monkeypatch.setattr(app_module, "write_item_values", write)
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).select("happy")
+            app.query_one("#selection-vibe", CustomSelectionList).select("afro")
+            item_id = app.item.id
+            await pilot.press("right")
+            await pilot.pause()
+            assert app.is_running
+            header = app.query_one("#header_text_content", Static).render().plain
+            assert "mood" in header
+        assert temp_beets_library.get_item(item_id).get("vibe") == "afro"
 
 
 class TestCategoryPanelLayout:

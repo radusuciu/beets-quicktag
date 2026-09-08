@@ -83,6 +83,10 @@ class HeaderWidget(Vertical):
 
         self._header_text_display.update(header_text_value)
 
+    def show_message(self, text: str) -> None:
+        """Replace the title line with ``text`` until ``update_header`` runs."""
+        self._header_text_display.update(text)
+
 
 class QuickTagApp(App):
     BINDINGS = [
@@ -219,7 +223,7 @@ class QuickTagApp(App):
             )
             # The log goes nowhere in a real session, and the user would
             # otherwise believe the category was saved for next time.
-            self.header_widget._header_text_display.update(
+            self.header_widget.show_message(
                 f"Could not write categories file: {self.definitions_path}"
             )
 
@@ -416,10 +420,13 @@ class QuickTagApp(App):
         # Capture the current playback state before changing items
         was_playing_before = self.playback_widget.is_playing()
 
+        # The title changes before the save so that a save failure reported
+        # by ``_save_current_item_tags`` is the last thing written to the
+        # header rather than being overwritten by the new title.
+        self.header_widget.update_header(item)
         if save_current_item_tags:
             await self._save_current_item_tags()
         self.item = item
-        self.header_widget.update_header(item)
         await self._load_tags_for_current_item()
         self.log.info(f"Item set to: {item.artist} - {item.title}")
 
@@ -483,10 +490,10 @@ class QuickTagApp(App):
             else:
                 # There is nowhere to move to, but the last item's tags would
                 # otherwise never be saved (only moving off an item saves it).
-                await self._save_current_item_tags()
-                self.header_widget._header_text_display.update(
-                    "All items processed. Press Esc to quit."
-                )
+                if await self._save_current_item_tags():
+                    self.header_widget.show_message(
+                        "All items processed. Press Esc to quit."
+                    )
                 return False
         elif direction == NavigateDirection.BACKWARD:
             if self.current_item_index > 0:
@@ -590,17 +597,23 @@ class QuickTagApp(App):
         # would leave the new one paused; auto-advance means keep listening.
         self.playback_widget.play()
 
-    async def _save_current_item_tags(self) -> None:
-        """Saves the tags for the current item based on selections."""
+    async def _save_current_item_tags(self) -> bool:
+        """Save the current item's selections. Returns False on any failure.
+
+        A failure is logged and shown in the header; it never propagates,
+        because the save runs from track changes and quitting, where an
+        exception would tear the app down.
+        """
         if not self.item:
             self.log.warning("_save_current_item_tags: No item to save.")
-            return
+            return True
 
         self.log.info(
             "_save_current_item_tags: Attempting to save tags for "
             f"{self.item.artist} - {self.item.title}"
         )
         changed = False
+        ok = True
         for category_name in self.definitions.categories:
             try:
                 selection_list = self._selection_list(category_name)
@@ -622,7 +635,17 @@ class QuickTagApp(App):
             # not selectable, so they must be re-added here or the write
             # below would drop them.
             selected_values.extend(self._unadoptable_values.get(category_name, []))
-            if write_item_values(self.item, category_name, selected_values):
+            try:
+                written = write_item_values(self.item, category_name, selected_values)
+            except Exception as error:
+                # One field beets refuses must not lose the others' changes.
+                self.log.error(f"Could not update {category_name}: {error}")
+                self.header_widget.show_message(
+                    f"Could not update '{category_name}': {error}"
+                )
+                ok = False
+                continue
+            if written:
                 self.log.info(
                     f"Updating {category_name} to {selected_values!r} "
                     f"for {self.item.title}"
@@ -662,15 +685,21 @@ class QuickTagApp(App):
                 self.log.info(
                     f"Successfully stored item: {self.item.artist} - {self.item.title}"
                 )
-            except Exception as e:
+            except Exception as error:
                 self.log.error(
-                    f"Error storing item {self.item.artist} - {self.item.title}: {e}"
+                    f"Error storing item {self.item.artist} - {self.item.title}: "
+                    f"{error}"
                 )
+                self.header_widget.show_message(
+                    f"Could not save {self.item.artist} - {self.item.title}: {error}"
+                )
+                return False
         else:
             self.log.info(
                 f"No changes detected for '{self.item.artist} - "
                 f"{self.item.title}'. Nothing to store."
             )
+        return ok
 
     async def _load_tags_for_current_item(self) -> None:
         """Loads the tags for the current item into the selection lists."""
