@@ -1,4 +1,4 @@
-"""`beet quicktag` startup: categories file resolution and load rules (§3.2)."""
+"""`beet quicktag` startup: categories file resolution and load rules."""
 
 import optparse
 from pathlib import Path
@@ -117,6 +117,28 @@ class TestLoadRules:
         assert "No categories defined" in out
         assert "quicktag_categories.yaml" in out
         assert not (tmp_path / "quicktag_categories.yaml").exists()
+
+    @pytest.mark.parametrize("text", ["", "{}\n", "# nothing yet\n"])
+    def test_empty_file_launches_with_a_notice(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        text: str,
+    ) -> None:
+        """The file wins even when empty, so say why the config is ignored."""
+        path = tmp_path / "quicktag_categories.yaml"
+        path.write_text(text)
+        plugin = make_plugin(tmp_path, monkeypatch, categories={"mood": ["cfg"]})
+        app_class = run(plugin, temp_beets_library)
+        app_class.return_value.run.assert_called_once()
+        assert app_class.call_args.kwargs["definitions"].categories == []
+        out = capsys.readouterr().out
+        assert str(path) in out
+        assert "no categories" in out
+        assert "ignored" in out
+        assert "ctrl+n" in out
 
     def test_unparseable_file_stops_with_path(
         self,

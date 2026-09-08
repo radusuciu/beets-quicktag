@@ -76,6 +76,14 @@ class QuickTagPlugin(BeetsPlugin):
                 "config section. Categories are now read from that file (and "
                 "edited from the TUI); the config section no longer applies."
             )
+        if not definitions.categories:
+            # An existing but empty file still wins over the config section;
+            # without a word the user would wonder where their config went.
+            ui.print_(
+                f"quicktag: {definitions_path} defines no categories, so the "
+                "'categories' config section is ignored. Press ctrl+n in the "
+                "TUI to add one, or edit the file."
+            )
         for warning in definitions.fixed_field_warnings():
             ui.print_(warning)
 
