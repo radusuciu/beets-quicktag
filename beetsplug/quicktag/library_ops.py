@@ -79,11 +79,22 @@ def _migrate(lib: Library, mutate: Callable[[Item], bool]) -> int:
     return changed
 
 
-def count_tracks(lib: Library, category: str, value: str | None = None) -> int:
-    """Tracks carrying ``value`` in ``category``, or any value when ``None``."""
+def count_tracks(
+    lib: Library,
+    category: str,
+    value: str | None = None,
+    *,
+    exclude_id: int | None = None,
+) -> int:
+    """Tracks carrying ``value`` in ``category``, or any value when ``None``.
+
+    ``exclude_id`` leaves one track out, for a caller that knows that
+    track's values better than its stored row does.
+    """
+    items = (item for item in lib.items() if item.id != exclude_id)
     if value is None:
-        return sum(1 for item in lib.items() if read_item_values(item, category))
-    return sum(1 for item in lib.items() if _has_value(item, category, value))
+        return sum(1 for item in items if read_item_values(item, category))
+    return sum(1 for item in items if _has_value(item, category, value))
 
 
 def rename_option(lib: Library, category: str, old: str, new: str) -> int:

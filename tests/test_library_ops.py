@@ -57,6 +57,14 @@ class TestCountTracks:
         assert count_tracks(lib, "mood", "zzz") == 0
         assert count_tracks(lib, "vibe") == 0
 
+    def test_leaves_out_the_excluded_track(self, lib: Library) -> None:
+        skipped = add_track(lib, mood="a, b")
+        add_track(lib, mood="a")
+        assert count_tracks(lib, "mood", "a", exclude_id=skipped) == 1
+        assert count_tracks(lib, "mood", "b", exclude_id=skipped) == 0
+        assert count_tracks(lib, "mood", exclude_id=skipped) == 1
+        assert count_tracks(lib, "mood", "a", exclude_id=None) == 2
+
     def test_counts_fixed_scalar_field(self, lib: Library) -> None:
         add_track(lib, composer="X, Y")
         add_track(lib, composer="")

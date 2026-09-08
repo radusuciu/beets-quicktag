@@ -15,7 +15,7 @@ from textual.dom import NoMatches
 from textual.widgets import Footer, Input, Static
 from textual.worker import WorkerFailed
 
-from .definitions import CategoryDefinitions
+from .definitions import CategoryDefinitions, find_case_insensitive
 from .definitions_file import write_definitions_file
 from .item_values import read_item_values, write_item_values
 from .library_ops import (
@@ -448,11 +448,38 @@ class QuickTagApp(App):
     async def _count_tracks(self, category: str, value: str | None = None) -> int:
         """Count off the event loop: it scans the whole library.
 
-        Pending selections on the current track must take part, so it is
-        saved first.
+        The current track is counted as the panel shows it, pending
+        selection included, and not stored first: cancelling the prompt
+        must leave it exactly as it was.
         """
-        await self._save_current_item_tags()
-        return await self._off_loop(partial(count_tracks, self.lib, category, value))
+        shown = self._shown_values(category)
+        if shown is None:
+            return await self._off_loop(
+                partial(count_tracks, self.lib, category, value)
+            )
+        count = await self._off_loop(
+            partial(count_tracks, self.lib, category, value, exclude_id=self.item.id)
+        )
+        if value is None:
+            has_value = bool(shown)
+        else:
+            has_value = find_case_insensitive(shown, value) is not None
+        return count + int(has_value)
+
+    def _shown_values(self, category: str) -> list[str] | None:
+        """The current track's ``category`` values as the screen has them.
+
+        Selected options plus the values the track carries that could not
+        become options: exactly what a save would write. ``None`` when
+        there is no track or no list for ``category``.
+        """
+        if not self.item:
+            return None
+        try:
+            selected = list(self._selection_list(category).selected)
+        except NoMatches:
+            return None
+        return selected + self._unadoptable_values.get(category, [])
 
     async def _off_loop(self, work: Callable[[], T]) -> T:
         """Run ``work`` in a thread so the UI keeps painting; re-raise its error.
@@ -532,6 +559,11 @@ class QuickTagApp(App):
         """
         changed = 0
         if migrate is not None:
+            # The prompt counted the track's pending selection without
+            # storing it; the migration reloads the track, so store now or
+            # the selection is lost. A failed store already says why.
+            if not await self._save_current_item_tags():
+                return None
             self.header_widget.show_message("Updating library…")
             try:
                 changed = await self._off_loop(migrate)

@@ -523,31 +523,55 @@ class TestEditFlowsShared:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("kind", "expected"),
+        ("kind", "expected", "stored_after"),
         [
-            (EditKind.RENAME_OPTION, "Rename 'sad' to 'x' on 1 tracks? y/n"),
-            (EditKind.REMOVE_OPTION, "Delete 'sad' from 1 tracks? y/n"),
+            (
+                EditKind.RENAME_OPTION,
+                "Rename 'sad' to 'x' on 1 tracks? y/n",
+                {"mood": "x"},
+            ),
+            (
+                EditKind.REMOVE_OPTION,
+                "Delete 'sad' from 1 tracks? y/n",
+                {"mood": None},
+            ),
             (
                 EditKind.RENAME_CATEGORY,
                 "Rename category 'mood' to 'x' on 1 tracks? y/n",
+                {"mood": None, "x": "sad"},
             ),
             (
                 EditKind.REMOVE_CATEGORY,
                 "Delete category 'mood' and its values from 1 tracks? y/n",
+                {"mood": None},
             ),
         ],
     )
-    async def test_pending_selection_is_saved_before_counting(
-        self, temp_beets_library: Library, kind: EditKind, expected: str
+    async def test_pending_selection_is_counted_but_not_stored(
+        self,
+        temp_beets_library: Library,
+        kind: EditKind,
+        expected: str,
+        stored_after: dict[str, str | None],
     ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        """The prompt counts what is on screen without touching the
+        database; ``y`` stores the track right before the library changes."""
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"], "vibe": ["afro"]})
         async with app.run_test() as pilot:
             app.query_one("#selection-mood", CustomSelectionList).select("sad")
+            app.query_one("#selection-vibe", CustomSelectionList).select("afro")
             panel = await start_edit(app, pilot, kind, index=1)
             if panel.input_active:
                 await submit(app, pilot, "x")
             assert panel.confirm_prompt.render().plain == expected
-        assert temp_beets_library.get_item(app.item.id).get("mood") == "sad"
+            item_id = app.item.id
+            assert temp_beets_library.get_item(item_id).get("mood") is None
+            assert temp_beets_library.get_item(item_id).get("vibe") is None
+            await answer(app, pilot, "y")
+            stored = temp_beets_library.get_item(item_id)
+            assert stored.get("vibe") == "afro"
+            for field, value in stored_after.items():
+                assert stored.get(field) == value, field
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("key", ["n", "escape"])
@@ -563,10 +587,16 @@ class TestEditFlowsShared:
     async def test_n_or_escape_cancels(
         self, temp_beets_library: Library, kind: EditKind, key: str
     ) -> None:
-        first = tracks(temp_beets_library)[0]
+        """Cancelling leaves the track as it was: stored value untouched and
+        the pending selection still pending."""
+        first, second = tracks(temp_beets_library)[:2]
         set_field(temp_beets_library, first.id, "mood", "sad")
+        set_field(temp_beets_library, second.id, "mood", "sad")
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
         async with app.run_test() as pilot:
+            selection_list = app.query_one("#selection-mood", CustomSelectionList)
+            selection_list.deselect("sad")
+            selection_list.select("happy")
             panel = await start_edit(app, pilot, kind, index=1)
             if panel.input_active:
                 await submit(app, pilot, "x")
@@ -574,10 +604,44 @@ class TestEditFlowsShared:
             await answer(app, pilot, key)
             assert panel.inline_active is False
             assert app.definitions.to_mapping() == {"mood": ["happy", "sad"]}
-            assert panel.selection_list.selected == ["sad"]
+            assert panel.selection_list.selected == ["happy"]
             assert app.focused is panel.selection_list
             assert app.is_running
-        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+            assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+
+    @pytest.mark.asyncio
+    async def test_failing_save_of_the_current_track_aborts_the_edit(
+        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The migration would reload the track and drop its unsaved
+        selection, so it must not run when the save before it fails."""
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        migrations: list[tuple[object, ...]] = []
+
+        def record(*args: object, **kwargs: object) -> int:
+            migrations.append(args)
+            return 0
+
+        def fail(self: Item, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr("beetsplug.quicktag.app.remove_option", record)
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).select("sad")
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            # Setting an attribute on an Item makes a flex attr, so patch the
+            # class rather than the instance.
+            monkeypatch.setattr(Item, "store", fail)
+            await answer(app, pilot, "y")
+            assert "Could not save" in header_text(app)
+            assert "disk full" in header_text(app)
+            assert migrations == []
+            assert app.definitions.to_mapping() == {"mood": ["happy", "sad"]}
+            assert prompts(panel.selection_list) == ["happy", "sad"]
+            assert panel.selection_list.selected == ["sad"]
+            assert panel.inline_active is False
+            assert app.focused is panel.selection_list
+            assert app.is_running
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
