@@ -649,6 +649,18 @@ class TestEscape:
         assert app.return_code == 0 or not app.is_running
 
     @pytest.mark.asyncio
+    async def test_ctrl_q_quits_with_an_input_open(
+        self, temp_beets_library: Library
+    ) -> None:
+        """Textual's built-in ctrl+q must not be demoted to a cancel."""
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "ctrl+q")
+            await pilot.pause()
+            # Leaving run_test() stops the app anyway, so check before that.
+            assert app.return_code == 0
+
+    @pytest.mark.asyncio
     async def test_second_escape_quits(self, temp_beets_library: Library) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:

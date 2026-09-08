@@ -86,7 +86,9 @@ class HeaderWidget(Vertical):
 
 class QuickTagApp(App):
     BINDINGS = [
-        Binding("escape", "quit", "Quit", show=True, priority=True),
+        # Escape has its own action so that Textual's built-in ctrl+q, which
+        # maps to ``quit``, keeps quitting even while an inline edit is open.
+        Binding("escape", "cancel_or_quit", "Quit", show=True, priority=True),
         # No priority: the focused widget wins first, so Left/Right move the
         # cursor inside the comments input instead of changing track.
         Binding("left", "previous_item", "Previous", show=True),
@@ -327,10 +329,14 @@ class QuickTagApp(App):
         new_category_input.close()
         panel.selection_list.focus()
 
-    async def action_quit(self) -> None:
+    async def action_cancel_or_quit(self) -> None:
         """Escape: cancel an open inline edit if there is one, else quit."""
         if self._cancel_inline_edit():
             return
+        await self.action_quit()
+
+    async def action_quit(self) -> None:
+        """Quit (also Textual's ctrl+q), saving first if autosave is on."""
         self.log.info(
             "action_quit called. "
             f"autosave_on_quit_enabled: {self.autosave_on_quit_enabled}"
