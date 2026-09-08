@@ -580,3 +580,119 @@ class TestRenameOptionFlow:
             assert app.focused is panel.selection_list
         assert not path.exists()
         assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+
+
+class TestRemoveOptionFlow:
+    @pytest.mark.asyncio
+    async def test_delete_asks_with_the_track_count(
+        self, temp_beets_library: Library
+    ) -> None:
+        first, second = tracks(temp_beets_library)[:2]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        set_field(temp_beets_library, second.id, "mood", "sad, happy")
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
+            await pilot.press("delete")
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.confirm_active is True
+            assert panel.confirm_prompt.render().plain == (
+                "Delete 'sad' from 2 tracks? y/n"
+            )
+            assert app.focused is panel.confirm_prompt
+
+    @pytest.mark.asyncio
+    async def test_delete_asks_even_with_no_tracks(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
+            await pilot.press("delete")
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.confirm_prompt.render().plain == (
+                "Delete 'sad' from 0 tracks? y/n"
+            )
+
+    @pytest.mark.asyncio
+    async def test_y_removes_option_everywhere(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        first, second = tracks(temp_beets_library)[:2]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        set_field(temp_beets_library, second.id, "mood", "sad, happy")
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad", "calm"]}, path)
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
+            await pilot.press("delete")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.inline_active is False
+            assert app.definitions.options("mood") == ["happy", "calm"]
+            assert prompts(panel.selection_list) == ["happy", "calm"]
+            assert panel.selection_list.highlighted == 1
+            assert panel.selection_list.selected == []
+            assert app.item.get("mood") is None
+            assert app.focused is panel.selection_list
+        assert "mood" not in temp_beets_library.get_item(first.id)
+        assert temp_beets_library.get_item(second.id).get("mood") == "happy"
+        assert read_definitions_file(path).options("mood") == ["happy", "calm"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key", ["n", "escape"])
+    async def test_n_or_escape_cancels(
+        self, temp_beets_library: Library, key: str
+    ) -> None:
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
+            await pilot.press("delete")
+            await pilot.pause()
+            await pilot.press(key)
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.inline_active is False
+            assert app.definitions.options("mood") == ["happy", "sad"]
+            assert panel.selection_list.selected == ["sad"]
+            assert app.is_running
+        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+
+    @pytest.mark.asyncio
+    async def test_pending_selection_is_saved_before_counting(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            lst.select("sad")
+            lst.highlighted = 1
+            await pilot.press("delete")
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.confirm_prompt.render().plain == (
+                "Delete 'sad' from 1 tracks? y/n"
+            )
+
+    @pytest.mark.asyncio
+    async def test_deleting_the_last_option_leaves_an_empty_list(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["only"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).highlighted = 0
+            await pilot.press("delete")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert app.definitions.options("mood") == []
+            assert panel.selection_list.option_count == 0
+            assert panel.selection_list.highlighted is None
+            assert app.focused is panel.selection_list

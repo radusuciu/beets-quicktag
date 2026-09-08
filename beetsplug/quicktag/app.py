@@ -16,7 +16,7 @@ from textual.widgets import Footer, Input, Static
 from .definitions import CategoryDefinitions
 from .definitions_file import write_definitions_file
 from .item_values import read_item_values, write_item_values
-from .library_ops import count_tracks, rename_option
+from .library_ops import count_tracks, remove_option, rename_option
 from .widgets.category_panel import RENAME_OPTION_PLACEHOLDER, CategoryPanel
 from .widgets.custom_selection_list import CustomSelectionList, EditKind
 from .widgets.inline_input import InlineInput
@@ -289,6 +289,14 @@ class QuickTagApp(App):
                 initial=value,
                 placeholder=RENAME_OPTION_PLACEHOLDER,
             )
+        elif kind is EditKind.REMOVE_OPTION and value is not None:
+            await self._save_current_item_tags()
+            count = count_tracks(self.lib, panel.category, value)
+            self._ask(
+                panel,
+                f"Delete '{value}' from {count} tracks? y/n",
+                partial(self._remove_option, panel, value),
+            )
 
     async def on_category_panel_inline_submitted(
         self, message: CategoryPanel.InlineSubmitted
@@ -351,6 +359,19 @@ class QuickTagApp(App):
         applied = await self._apply_edit(
             migrate=lambda: rename_option(self.lib, category, old, new),
             update_model=lambda: self.definitions.rename_option(category, old, new),
+        )
+        if not applied:
+            return
+        panel.set_options(self.definitions.options(category), highlighted=highlighted)
+        await self._reload_after_migration()
+
+    async def _remove_option(self, panel: CategoryPanel, value: str) -> None:
+        """Migrate, then update the model, the file, the list and the track."""
+        category = panel.category
+        highlighted = panel.selection_list.highlighted
+        applied = await self._apply_edit(
+            migrate=lambda: remove_option(self.lib, category, value),
+            update_model=lambda: self.definitions.remove_option(category, value),
         )
         if not applied:
             return
