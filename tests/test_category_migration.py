@@ -354,6 +354,45 @@ class TestHeaderMessages:
                 f"Tagging: {app.item.artist} - {app.item.title}"
             )
 
+    @pytest.mark.asyncio
+    async def test_transient_message_restores_the_previous_message(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["x"]})
+        async with app.run_test():
+            app.header_widget.show_message("All items processed")
+            app.header_widget.show_transient("Updating library…")
+            assert header_text(app) == "Updating library…"
+            app.header_widget.clear_transient()
+            assert header_text(app) == "All items processed"
+
+    @pytest.mark.asyncio
+    async def test_transient_message_restores_the_title_when_there_was_none(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["x"]})
+        async with app.run_test():
+            title = header_text(app)
+            app.header_widget.show_transient("Updating library…")
+            assert header_text(app) == "Updating library…"
+            app.header_widget.clear_transient()
+            assert header_text(app) == title
+
+    @pytest.mark.asyncio
+    async def test_track_change_drops_a_transient_and_what_it_covered(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["x"]})
+        async with app.run_test() as pilot:
+            app.header_widget.show_message("Something happened")
+            app.header_widget.show_transient("Updating library…")
+            await pilot.press("right")
+            await pilot.pause()
+            title = f"Tagging: {app.item.artist} - {app.item.title}"
+            assert header_text(app) == title
+            app.header_widget.clear_transient()
+            assert header_text(app) == title
+
 
 class TestReloadAfterMigration:
     @pytest.mark.asyncio
@@ -708,6 +747,46 @@ class TestEditFlowsShared:
             assert header_text(app) == (
                 f"Tagging: {app.item.artist} - {app.item.title}"
             )
+
+    @pytest.mark.asyncio
+    async def test_all_items_processed_survives_a_migration(
+        self, temp_beets_library: Library
+    ) -> None:
+        """ "Updating library…" is transient: once the library is updated
+        the header shows what it showed before."""
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, items=[first])
+        async with app.run_test() as pilot:
+            await pilot.press("right")
+            await pilot.pause()
+            done = "All items processed. Press Esc to quit."
+            assert header_text(app) == done
+            await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            await answer(app, pilot, "y")
+            assert header_text(app) == done
+            assert app.definitions.options("mood") == ["happy"]
+        assert "mood" not in temp_beets_library.get_item(first.id)
+
+    @pytest.mark.asyncio
+    async def test_failure_replaces_all_items_processed(
+        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = tracks(temp_beets_library)[0]
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, items=[first])
+
+        def explode(*args: object, **kwargs: object) -> int:
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr("beetsplug.quicktag.app.remove_option", explode)
+        async with app.run_test() as pilot:
+            await pilot.press("right")
+            await pilot.pause()
+            assert header_text(app).startswith("All items processed")
+            await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            await answer(app, pilot, "y")
+            assert "Library update failed" in header_text(app)
+            assert "disk on fire" in header_text(app)
 
     @pytest.mark.asyncio
     async def test_unwritable_definitions_file_is_reported_and_the_track_reloaded(

@@ -73,6 +73,8 @@ class HeaderWidget(Vertical):
         # A message replaces the title line until it is cleared; the title
         # is re-rendered underneath it, never over it.
         self._message: str | None = None
+        # What a transient message covers, restored when it is cleared.
+        self._before: str | None = None
         # markup=False: titles and status messages are literal text, and
         # real-world metadata contains brackets (e.g. "Song [feat. X]").
         self._header_text_display = Static(id="header_text_content", markup=False)
@@ -96,11 +98,27 @@ class HeaderWidget(Vertical):
     def show_message(self, text: str) -> None:
         """Replace the title line with ``text`` until ``clear_message``."""
         self._message = text
+        self._before = None
         self._render_line()
 
     def clear_message(self) -> None:
         """Drop the message and show the title again."""
         self._message = None
+        self._before = None
+        self._render_line()
+
+    def show_transient(self, text: str) -> None:
+        """Show ``text`` over whatever is on the line, to be put back by
+        ``clear_transient``."""
+        self._before = self._message
+        self._message = text
+        self._render_line()
+
+    def clear_transient(self) -> None:
+        """Put back what the transient message covered: a message, or the
+        title when there was none."""
+        self._message = self._before
+        self._before = None
         self._render_line()
 
     def _render_line(self) -> None:
@@ -564,7 +582,7 @@ class QuickTagApp(App):
             # the selection is lost. A failed store already says why.
             if not await self._save_current_item_tags():
                 return None
-            self.header_widget.show_message("Updating library…")
+            self.header_widget.show_transient("Updating library…")
             try:
                 changed = await self._off_loop(migrate)
             except Exception as error:
@@ -577,7 +595,7 @@ class QuickTagApp(App):
                 )
                 return None
             self.log.info(f"Library migration changed {changed} tracks.")
-            self.header_widget.clear_message()
+            self.header_widget.clear_transient()
         self.definitions = planned
         self._persist_definitions()
         return changed
