@@ -16,7 +16,13 @@ from textual.widgets import Footer, Input, Static
 from .definitions import CategoryDefinitions
 from .definitions_file import write_definitions_file
 from .item_values import read_item_values, write_item_values
-from .library_ops import count_tracks, remove_option, rename_category, rename_option
+from .library_ops import (
+    count_tracks,
+    remove_category,
+    remove_option,
+    rename_category,
+    rename_option,
+)
 from .widgets.category_panel import (
     RENAME_CATEGORY_PLACEHOLDER,
     RENAME_OPTION_PLACEHOLDER,
@@ -305,6 +311,15 @@ class QuickTagApp(App):
             panel.open_input(
                 kind, initial=panel.category, placeholder=RENAME_CATEGORY_PLACEHOLDER
             )
+        elif kind is EditKind.REMOVE_CATEGORY:
+            await self._save_current_item_tags()
+            count = count_tracks(self.lib, panel.category)
+            self._ask(
+                panel,
+                f"Delete category '{panel.category}' and its values from "
+                f"{count} tracks? y/n",
+                partial(self._remove_category, panel),
+            )
 
     async def on_category_panel_inline_submitted(
         self, message: CategoryPanel.InlineSubmitted
@@ -414,6 +429,25 @@ class QuickTagApp(App):
         await panel.remove()
         await self._reload_after_migration()
         replacement.selection_list.focus()
+
+    async def _remove_category(self, panel: CategoryPanel) -> None:
+        name = panel.category
+        panels = list(self.query(CategoryPanel))
+        index = panels.index(panel)
+        applied = await self._apply_edit(
+            migrate=lambda: remove_category(self.lib, name),
+            update_model=lambda: self.definitions.remove_category(name),
+        )
+        if not applied:
+            return
+        await panel.remove()
+        await self._reload_after_migration()
+        remaining = list(self.query(CategoryPanel))
+        if remaining:
+            # The panel that took the removed one's place, or the last one.
+            remaining[min(index, len(remaining) - 1)].selection_list.focus()
+        else:
+            self._focus_after_closing_category_input()
 
     async def _remove_option(self, panel: CategoryPanel, value: str) -> None:
         """Migrate, then update the model, the file, the list and the track."""

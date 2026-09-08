@@ -18,6 +18,7 @@ from beetsplug.quicktag.widgets.custom_selection_list import (
     CustomSelectionList,
     EditKind,
 )
+from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 
 LIST_FIELD = "genres"
 needs_list_field = pytest.mark.skipif(
@@ -838,3 +839,119 @@ class TestRenameCategoryFlow:
         item = temp_beets_library.get_item(first.id)
         assert item[LIST_FIELD] == ["House", "Techno"]
         assert not item.get("genre")
+
+
+class TestRemoveCategoryFlow:
+    @pytest.mark.asyncio
+    async def test_ctrl_d_asks_with_the_track_count(
+        self, temp_beets_library: Library
+    ) -> None:
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "happy")
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+d")
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.confirm_prompt.render().plain == (
+                "Delete category 'mood' and its values from 1 tracks? y/n"
+            )
+            assert app.focused is panel.confirm_prompt
+
+    @pytest.mark.asyncio
+    async def test_y_removes_panel_values_and_focuses_the_next_panel(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "happy")
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(
+            temp_beets_library,
+            {"mood": ["happy"], "vibe": ["afro"], "zest": ["z"]},
+            path,
+        )
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+d")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert app.definitions.categories == ["vibe", "zest"]
+            assert [p.id for p in app.query(CategoryPanel)] == [
+                "panel-vibe",
+                "panel-zest",
+            ]
+            assert app.focused is app.query_one("#selection-vibe")
+            assert "mood" not in app.item
+        assert "mood" not in temp_beets_library.get_item(first.id)
+        assert read_definitions_file(path).categories == ["vibe", "zest"]
+
+    @pytest.mark.asyncio
+    async def test_deleting_the_last_panel_focuses_the_previous_one(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-vibe", CustomSelectionList).focus()
+            await pilot.press("ctrl+d")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert app.definitions.categories == ["mood"]
+            assert app.focused is app.query_one("#selection-mood")
+
+    @pytest.mark.asyncio
+    async def test_deleting_the_only_category_focuses_comments(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+d")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert app.definitions.categories == []
+            assert list(app.query(CategoryPanel)) == []
+            assert app.focused is app.query_one(
+                "#comments-input", InputWithLabel
+            ).query_one(Input)
+
+    @pytest.mark.asyncio
+    async def test_n_cancels(self, temp_beets_library: Library) -> None:
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "happy")
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+d")
+            await pilot.pause()
+            await pilot.press("n")
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.inline_active is False
+            assert app.definitions.categories == ["mood"]
+            assert app.focused is panel.selection_list
+        assert temp_beets_library.get_item(first.id).get("mood") == "happy"
+
+    @pytest.mark.asyncio
+    async def test_migration_failure_keeps_the_panel(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+
+        def explode(*args: object, **kwargs: object) -> int:
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr("beetsplug.quicktag.app.remove_category", explode)
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+d")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert "Library update failed" in header_text(app)
+            assert app.definitions.categories == ["mood"]
+            assert [p.id for p in app.query(CategoryPanel)] == ["panel-mood"]
+            assert app.focused is app.query_one("#selection-mood")
+        assert not path.exists()
