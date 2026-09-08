@@ -153,7 +153,8 @@ class TestAdoptingUnknownValues:
     async def test_case_variant_selects_the_existing_option(
         self, temp_beets_library: Library
     ) -> None:
-        """'HAPPY' is the stored 'happy'; it selects it instead of being lost."""
+        """'HAPPY' is the stored 'happy'; it selects it instead of being lost,
+        and merely visiting the track leaves the stored spelling alone."""
         item = next(iter(temp_beets_library.items()))
         item["mood"] = "HAPPY"
         item.store()
@@ -163,7 +164,20 @@ class TestAdoptingUnknownValues:
             assert lst.option_count == 1
             assert lst.selected == ["happy"]
             await app._save_current_item_tags()
-        assert temp_beets_library.get_item(item.id).get("mood") == "happy"
+        assert temp_beets_library.get_item(item.id).get("mood") == "HAPPY"
+
+    @pytest.mark.asyncio
+    async def test_case_variant_is_normalised_when_the_selection_changes(
+        self, temp_beets_library: Library
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "HAPPY"
+        item.store()
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test():
+            app.query_one("#selection-mood", CustomSelectionList).select("sad")
+            await app._save_current_item_tags()
+        assert temp_beets_library.get_item(item.id).get("mood") == "happy, sad"
 
     @needs_list_field
     @pytest.mark.asyncio

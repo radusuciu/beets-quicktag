@@ -1,7 +1,7 @@
-"""Reading and writing a category's values on a beets Item (§3.3 shapes)."""
+"""Reading and writing a category's values on a beets Item."""
 
 import pytest
-from beets.library import Item
+from beets.library import Album, Item, Library
 
 from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.item_values import (
@@ -75,6 +75,14 @@ class TestWriteItemValues:
         assert write_item_values(item, "album", []) is True
         assert item.album == ""
 
+    def test_same_values_different_case_is_no_change(self) -> None:
+        """Browsing past a track must not rewrite its tags (and, for a media
+        field, reset ``mtime``) just to normalise the spelling."""
+        item = Item()
+        item["mood"] = "ROCK"
+        assert write_item_values(item, "mood", ["rock"]) is False
+        assert item["mood"] == "ROCK"
+
     def test_same_values_different_order_is_no_change(self) -> None:
         item = Item()
         item["mood"] = "b, a"
@@ -96,3 +104,39 @@ class TestWriteItemValues:
         assert read_item_values(item, LIST_FIELD) == ["House", "Acid"]
         assert write_item_values(item, LIST_FIELD, []) is True
         assert item[LIST_FIELD] == []
+
+
+class TestAlbumFallback:
+    """``Item.get`` falls back to the album by default, but an album-level
+    flexible attribute is not the track's value and cannot be deleted from
+    the track."""
+
+    @pytest.fixture
+    def item_in_album(self) -> Item:
+        lib = Library(":memory:")
+        album = Album(lib, album="A")
+        album.add(lib)
+        item = Item(title="t", album="A", path=b"/t.mp3")
+        item.add(lib)
+        item.album_id = album.id
+        item.store()
+        album["mood"] = "dark"
+        # ``inherit=True`` (the default) would copy the value onto the track;
+        # the case under test is an album value the track only falls back to.
+        album.store(inherit=False)
+        return lib.get_item(item.id)
+
+    def test_album_value_is_not_read(self, item_in_album: Item) -> None:
+        assert item_in_album.get("mood") == "dark"
+        assert read_item_values(item_in_album, "mood") == []
+
+    def test_empty_write_over_album_value_is_no_change(
+        self, item_in_album: Item
+    ) -> None:
+        assert write_item_values(item_in_album, "mood", []) is False
+
+    def test_own_value_is_read_and_deleted(self, item_in_album: Item) -> None:
+        item_in_album["mood"] = "light"
+        assert read_item_values(item_in_album, "mood") == ["light"]
+        assert write_item_values(item_in_album, "mood", []) is True
+        assert item_in_album.get("mood", with_album=False) is None

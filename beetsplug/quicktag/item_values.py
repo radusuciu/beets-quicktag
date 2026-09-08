@@ -1,6 +1,6 @@
 """Read and write one category's values on a beets ``Item``.
 
-Three storage shapes exist (design §3.3):
+Three storage shapes exist:
 
 * flexible attribute: ``", "``-joined string; "empty" means the attribute
   is deleted;
@@ -33,8 +33,13 @@ def split_value(raw: object) -> list[str]:
 
 
 def read_item_values(item: Item, category: str) -> list[str]:
-    """The values currently stored for ``category`` on ``item``."""
-    return split_value(item.get(category))
+    """The values currently stored for ``category`` on ``item`` itself.
+
+    ``Item.get`` falls back to the album by default; an album-level flexible
+    attribute is not the track's value (and cannot be deleted from the track),
+    so the fallback is skipped.
+    """
+    return split_value(item.get(category, None, with_album=False))
 
 
 def encode_values(category: str, values: list[str]) -> str | list[str] | None:
@@ -50,14 +55,17 @@ def write_item_values(item: Item, category: str, values: list[str]) -> bool:
     """Store ``values`` on ``item`` in the right shape.
 
     Returns ``True`` when the item was modified. Existing and new values are
-    compared as sets of tokens, so re-saving the same selection (including
-    an empty one on an unset fixed field) is a no-op.
+    compared as case-folded sets of tokens, so re-saving the same selection
+    (including an empty one on an unset fixed field, or one that differs only
+    by case) is a no-op and the stored spelling is kept until the selection
+    changes.
     """
-    if sorted(read_item_values(item, category)) == sorted(values):
+    stored = sorted(value.casefold() for value in read_item_values(item, category))
+    if stored == sorted(value.casefold() for value in values):
         return False
     encoded = encode_values(category, values)
     if encoded is None:
-        if category in item:
+        if category in item.keys(with_album=False):
             del item[category]
     else:
         item[category] = encoded
