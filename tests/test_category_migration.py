@@ -174,6 +174,42 @@ class TestPanelInline:
             assert app.focused is panel.selection_list
 
     @pytest.mark.asyncio
+    async def test_n_clears_the_pending_action(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+
+            async def run() -> None:
+                raise AssertionError("the cancelled action must not run")
+
+            app._ask(panel, "Sure? y/n", run)
+            await pilot.pause()
+            await pilot.press("n")
+            await pilot.pause()
+            assert panel.confirm_active is False
+            assert app._pending_confirm is None
+
+    @pytest.mark.asyncio
+    async def test_opening_another_input_clears_the_pending_action(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+
+            async def run() -> None:
+                raise AssertionError("the abandoned action must not run")
+
+            app._ask(panel, "Sure? y/n", run)
+            await pilot.pause()
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert panel.confirm_active is False
+            assert app._pending_confirm is None
+
+    @pytest.mark.asyncio
     async def test_y_runs_the_pending_action_once(
         self, temp_beets_library: Library
     ) -> None:
@@ -703,6 +739,31 @@ class TestRemoveOptionFlow:
             assert app.definitions.options("mood") == ["happy", "sad"]
             assert panel.selection_list.selected == ["sad"]
             assert app.is_running
+        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+
+    @pytest.mark.asyncio
+    async def test_changing_track_cancels_the_confirm(
+        self, temp_beets_library: Library
+    ) -> None:
+        """Left/Right reach the app while the prompt has focus."""
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
+            await pilot.press("delete")
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.confirm_active is True
+            await pilot.press("right")
+            await pilot.pause()
+            assert app.current_item_index == 1
+            assert panel.confirm_active is False
+            assert app._pending_confirm is None
+            assert app.focused is panel.selection_list
+            await pilot.press("y")
+            await pilot.pause()
+            assert app.definitions.options("mood") == ["happy", "sad"]
         assert temp_beets_library.get_item(first.id).get("mood") == "sad"
 
     @pytest.mark.asyncio

@@ -107,6 +107,13 @@ class CategoryPanel(Vertical):
             super().__init__()
             self.panel = panel
 
+    class ConfirmCancelled(Message):
+        """The user answered ``n`` to the panel's confirm prompt."""
+
+        def __init__(self, panel: CategoryPanel) -> None:
+            super().__init__()
+            self.panel = panel
+
     class InputOpened(Message):
         """The panel's inline line (input or confirm) has just been revealed.
 
@@ -280,3 +287,5 @@ class CategoryPanel(Vertical):
         self.close_confirm()
         if message.confirmed:
             self.post_message(self.Confirmed(self))
+        else:
+            self.post_message(self.ConfirmCancelled(self))

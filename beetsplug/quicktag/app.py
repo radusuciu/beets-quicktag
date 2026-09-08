@@ -498,6 +498,17 @@ class QuickTagApp(App):
         if pending is not None and pending.panel is message.panel:
             await pending.run()
 
+    def on_category_panel_confirm_cancelled(
+        self, message: CategoryPanel.ConfirmCancelled
+    ) -> None:
+        """``n``: the prompt is gone, so its action must go with it."""
+        self._forget_confirm(message.panel)
+
+    def _forget_confirm(self, panel: CategoryPanel) -> None:
+        """Drop the pending action if it belongs to ``panel``."""
+        if self._pending_confirm is not None and self._pending_confirm.panel is panel:
+            self._pending_confirm = None
+
     def on_category_panel_input_opened(
         self, message: CategoryPanel.InputOpened
     ) -> None:
@@ -511,6 +522,7 @@ class QuickTagApp(App):
         """
         for panel in self.query(CategoryPanel):
             if panel is not except_panel and panel.inline_active:
+                self._forget_confirm(panel)
                 panel.close_inline(refocus=False)
         try:
             new_category_input = self._new_category_input()
@@ -700,6 +712,11 @@ class QuickTagApp(App):
         Returns True if the current item changed, False if we were already at
         the end the caller asked to move past.
         """
+        # An open input or confirm prompt belongs to the track on screen: the
+        # prompt does not bind Left/Right, so they arrive here with it still
+        # armed and would otherwise leave it stranded on the next track.
+        self._cancel_inline_edit()
+
         # TODO: Do we need this?
         # TODO: should be exception?
         if not self.item:
