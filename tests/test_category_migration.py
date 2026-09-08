@@ -19,6 +19,7 @@ from beetsplug.quicktag.widgets.custom_selection_list import (
     EditKind,
 )
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
+from beetsplug.quicktag.widgets.playback import PlaybackEnded
 from conftest import (
     LIST_FIELD,
     header_text,
@@ -689,6 +690,61 @@ class TestTrackChangeWhileEditing:
             await answer(app, pilot, "y")
             assert app.definitions.options("mood") == ["happy", "sad"]
         assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+
+    @pytest.mark.asyncio
+    async def test_left_on_the_first_track_keeps_the_confirm(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            await pilot.press("left")
+            await pilot.pause()
+            assert app.current_item_index == 0
+            assert panel.confirm_active is True
+            assert app.focused is panel.confirm_prompt
+            await answer(app, pilot, "y")
+            assert app.definitions.options("mood") == ["happy"]
+
+    @pytest.mark.asyncio
+    async def test_auto_advance_keeps_an_open_input_and_its_text(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(
+            temp_beets_library,
+            {"mood": ["happy", "sad"]},
+            autonext_at_track_end_enabled=True,
+        )
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, EditKind.RENAME_OPTION, index=1)
+            await pilot.press("end", "d", "e", "r")
+            app.post_message(PlaybackEnded(app.playback_widget.playback_generation))
+            await pilot.pause()
+            assert app.current_item_index == 1
+            assert panel.input_active is True
+            assert panel.input.value == "sadder"
+            assert app.focused is panel.input
+            await submit(app, pilot, "b", "l", "u", "e")
+            assert app.definitions.options("mood") == ["happy", "blue"]
+
+    @pytest.mark.asyncio
+    async def test_auto_advance_withdraws_an_armed_confirm(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(
+            temp_beets_library,
+            {"mood": ["happy", "sad"]},
+            autonext_at_track_end_enabled=True,
+        )
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            app.post_message(PlaybackEnded(app.playback_widget.playback_generation))
+            await pilot.pause()
+            assert app.current_item_index == 1
+            assert panel.confirm_active is False
+            assert app.focused is panel.selection_list
+            await answer(app, pilot, "y")
+            assert app.definitions.options("mood") == ["happy", "sad"]
 
 
 class TestRenameOptionFlow:

@@ -708,6 +708,13 @@ class QuickTagApp(App):
         # Capture the current playback state before changing items
         was_playing_before = self.playback_widget.is_playing()
 
+        # A y/n prompt was armed on the track that is leaving; nothing binds
+        # its keys once focus moves on, so it is withdrawn. An open input
+        # keeps its text and its focus.
+        for panel in self.query(CategoryPanel):
+            if panel.confirm_active:
+                panel.close_confirm(refocus=False)
+
         # The title changes before the save so that a save failure reported
         # by ``_save_current_item_tags`` is the last thing written to the
         # header rather than being overwritten by the new title.
@@ -719,7 +726,7 @@ class QuickTagApp(App):
         await self._load_tags_for_current_item()
         self.log.info(f"Item set to: {item.artist} - {item.title}")
 
-        if self.definitions.categories:
+        if self.definitions.categories and not self._inline_edit_active():
             try:
                 self._selection_list(self.definitions.categories[0]).focus()
             except NoMatches:
@@ -758,17 +765,21 @@ class QuickTagApp(App):
             if self.playback_widget.is_playing():
                 self.playback_widget.pause()
 
+    def _inline_edit_active(self) -> bool:
+        """True while a panel input or the new-category input is open."""
+        if any(panel.input_active for panel in self.query(CategoryPanel)):
+            return True
+        try:
+            return self._new_category_input().active
+        except NoMatches:
+            return False
+
     async def _navigate(self, direction: NavigateDirection) -> bool:
         """Navigates through the items list in the specified direction.
 
         Returns True if the current item changed, False if we were already at
         the end the caller asked to move past.
         """
-        # An open input or confirm prompt belongs to the track on screen: the
-        # prompt does not bind Left/Right, so they arrive here with it still
-        # armed and would otherwise leave it stranded on the next track.
-        self._cancel_inline_edit()
-
         # TODO: Do we need this?
         # TODO: should be exception?
         if not self.item:
