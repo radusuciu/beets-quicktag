@@ -11,7 +11,7 @@ track's ``HAPPY`` onto the option ``happy``; ``House`` never matches
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 
 from beets.library import Item, Library
@@ -35,23 +35,26 @@ def _dedupe(values: list[str]) -> list[str]:
     return result
 
 
-def _items_with_value(lib: Library, category: str, value: str) -> list[Item]:
+def _items_with_value(lib: Library, category: str, value: str) -> Iterator[Item]:
     """Tracks whose ``category`` holds ``value`` as a whole token.
 
     Filtered in Python (like ``_items_with_any_value``) so the comparison is
     exactly ``_same``'s casefold, whole-token match. A SQL/beets-query
     prefilter would narrow the scan on a different, ASCII-only notion of
     case-insensitivity and could reject rows ``_same`` would accept.
+
+    A generator, so counting the matches never materialises them; the
+    migrations consume it inside their transaction.
     """
-    return [
+    return (
         item
         for item in lib.items()
         if any(_same(token, value) for token in read_item_values(item, category))
-    ]
+    )
 
 
-def _items_with_any_value(lib: Library, category: str) -> list[Item]:
-    return [item for item in lib.items() if read_item_values(item, category)]
+def _items_with_any_value(lib: Library, category: str) -> Iterator[Item]:
+    return (item for item in lib.items() if read_item_values(item, category))
 
 
 @contextmanager
@@ -71,7 +74,7 @@ def _migration(lib: Library) -> Iterator[None]:
 
 def _rewrite(
     lib: Library,
-    items: list[Item],
+    items: Iterable[Item],
     category: str,
     rewrite: Callable[[list[str]], list[str]],
 ) -> int:
@@ -89,8 +92,8 @@ def _rewrite(
 def count_tracks(lib: Library, category: str, value: str | None = None) -> int:
     """Tracks carrying ``value`` in ``category``, or any value when ``None``."""
     if value is None:
-        return len(_items_with_any_value(lib, category))
-    return len(_items_with_value(lib, category, value))
+        return sum(1 for _ in _items_with_any_value(lib, category))
+    return sum(1 for _ in _items_with_value(lib, category, value))
 
 
 def rename_option(lib: Library, category: str, old: str, new: str) -> int:

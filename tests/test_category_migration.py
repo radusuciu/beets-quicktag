@@ -721,6 +721,59 @@ class TestRemoveOptionFlow:
         assert read_definitions_file(path).options("mood") == ["happy", "calm"]
 
     @pytest.mark.asyncio
+    async def test_header_says_the_library_is_being_updated(
+        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        seen: list[str] = []
+
+        def slow_migration(*args: object, **kwargs: object) -> int:
+            seen.append(header_text(app))
+            return 0
+
+        monkeypatch.setattr("beetsplug.quicktag.app.remove_option", slow_migration)
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
+            await pilot.press("delete")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert seen == ["Updating library…"]
+            assert header_text(app) == (
+                f"Tagging: {app.item.artist} - {app.item.title}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_definitions_failure_after_the_migration_says_so(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The library is already updated; the user must hear about the drift."""
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
+
+        def explode(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("model on fire")
+
+        monkeypatch.setattr(CategoryDefinitions, "remove_option", explode)
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
+            await pilot.press("delete")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert "Library updated but categories not" in header_text(app)
+            assert "model on fire" in header_text(app)
+            assert app.definitions.options("mood") == ["happy", "sad"]
+            assert app.is_running
+        assert not path.exists()
+        assert "mood" not in temp_beets_library.get_item(first.id)
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("key", ["n", "escape"])
     async def test_n_or_escape_cancels(
         self, temp_beets_library: Library, key: str

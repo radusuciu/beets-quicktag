@@ -463,9 +463,14 @@ class QuickTagApp(App):
     ) -> bool:
         """Library first, then model and file.
 
-        Returns ``False`` when the library update failed, in which case
-        nothing else has changed.
+        Returns ``False`` when either half failed. A failed migration changed
+        nothing at all; a failure after it leaves the library ahead of the
+        categories, which the caller must not paper over, so both say what
+        happened in the header and stop the edit there.
         """
+        # The passes over the library are synchronous, so this is the last
+        # thing the user sees until they are done.
+        self.header_widget.show_message("Updating library…")
         try:
             changed = migrate()
         except Exception as error:
@@ -477,8 +482,17 @@ class QuickTagApp(App):
             )
             return False
         self.log.info(f"Library migration changed {changed} tracks.")
-        update_model()
-        self._persist_definitions()
+        try:
+            update_model()
+            self._persist_definitions()
+        except Exception as error:
+            # The migration is committed and cannot be undone from here, so
+            # the drift is reported rather than hidden behind a crash.
+            self.log.error(f"Updating the categories after a migration: {error}")
+            self.header_widget.show_message(
+                f"Library updated but categories not: {error}"
+            )
+            return False
         return True
 
     def _ask(
