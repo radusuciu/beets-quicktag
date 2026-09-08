@@ -16,8 +16,12 @@ from textual.widgets import Footer, Input, Static
 from .definitions import CategoryDefinitions
 from .definitions_file import write_definitions_file
 from .item_values import read_item_values, write_item_values
-from .library_ops import count_tracks, remove_option, rename_option
-from .widgets.category_panel import RENAME_OPTION_PLACEHOLDER, CategoryPanel
+from .library_ops import count_tracks, remove_option, rename_category, rename_option
+from .widgets.category_panel import (
+    RENAME_CATEGORY_PLACEHOLDER,
+    RENAME_OPTION_PLACEHOLDER,
+    CategoryPanel,
+)
 from .widgets.custom_selection_list import CustomSelectionList, EditKind
 from .widgets.inline_input import InlineInput
 from .widgets.input_with_label import InputWithLabel
@@ -297,6 +301,10 @@ class QuickTagApp(App):
                 f"Delete '{value}' from {count} tracks? y/n",
                 partial(self._remove_option, panel, value),
             )
+        elif kind is EditKind.RENAME_CATEGORY:
+            panel.open_input(
+                kind, initial=panel.category, placeholder=RENAME_CATEGORY_PLACEHOLDER
+            )
 
     async def on_category_panel_inline_submitted(
         self, message: CategoryPanel.InlineSubmitted
@@ -308,6 +316,8 @@ class QuickTagApp(App):
             await self._submit_option_rename(
                 message.panel, message.target, message.value
             )
+        elif message.kind is EditKind.RENAME_CATEGORY:
+            await self._submit_category_rename(message.panel, message.value)
 
     def _add_option(self, panel: CategoryPanel, typed: str) -> None:
         """Validate, persist, show and select a new option.
@@ -364,6 +374,46 @@ class QuickTagApp(App):
             return
         panel.set_options(self.definitions.options(category), highlighted=highlighted)
         await self._reload_after_migration()
+
+    async def _submit_category_rename(self, panel: CategoryPanel, typed: str) -> None:
+        """Validate, then apply directly or ask first when tracks are affected."""
+        old = panel.category
+        try:
+            new = self.definitions.check_category_rename(old, typed)
+        except ValueError as error:
+            panel.show_error(str(error))
+            return
+        if new == old:
+            panel.close_input()
+            return
+        # Pending selections on the current track must take part in the count.
+        await self._save_current_item_tags()
+        count = count_tracks(self.lib, old)
+        run = partial(self._rename_category, panel, new)
+        if count:
+            self._ask(
+                panel,
+                f"Rename category '{old}' to '{new}' on {count} tracks? y/n",
+                run,
+            )
+        else:
+            panel.close_input()
+            await run()
+
+    async def _rename_category(self, panel: CategoryPanel, new: str) -> None:
+        """A widget id cannot change, so the panel is replaced in place."""
+        old = panel.category
+        applied = await self._apply_edit(
+            migrate=lambda: rename_category(self.lib, old, new),
+            update_model=lambda: self.definitions.rename_category(old, new),
+        )
+        if not applied:
+            return
+        replacement = CategoryPanel(new, self.definitions.options(new))
+        await self.mount(replacement, before=panel)
+        await panel.remove()
+        await self._reload_after_migration()
+        replacement.selection_list.focus()
 
     async def _remove_option(self, panel: CategoryPanel, value: str) -> None:
         """Migrate, then update the model, the file, the list and the track."""

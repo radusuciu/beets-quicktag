@@ -696,3 +696,145 @@ class TestRemoveOptionFlow:
             assert panel.selection_list.option_count == 0
             assert panel.selection_list.highlighted is None
             assert app.focused is panel.selection_list
+
+
+class TestRenameCategoryFlow:
+    @pytest.mark.asyncio
+    async def test_ctrl_r_opens_input_prefilled_with_the_name(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-vibe", CustomSelectionList).focus()
+            await pilot.press("ctrl+r")
+            await pilot.pause()
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert vibe.input_active is True
+            assert vibe.input.value == "vibe"
+            assert vibe.edit_kind is EditKind.RENAME_CATEGORY
+            assert app.focused is vibe.input
+            assert "category" in vibe.input.placeholder
+
+    @pytest.mark.asyncio
+    async def test_unchanged_name_just_closes(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+r")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.inline_active is False
+            assert app.definitions.categories == ["mood"]
+            assert app.focused is panel.selection_list
+
+    @pytest.mark.asyncio
+    async def test_rename_without_tracks_replaces_the_panel_in_place(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+r", "ctrl+u", "f", "e", "e", "l", "enter")
+            await pilot.pause()
+            assert app.definitions.categories == ["feel", "vibe"]
+            assert [p.id for p in app.query(CategoryPanel)] == [
+                "panel-feel",
+                "panel-vibe",
+            ]
+            feel = app.query_one("#panel-feel", CategoryPanel)
+            assert feel.category == "feel"
+            assert feel.selection_list.id == "selection-feel"
+            assert str(feel.border_title) == "feel"
+            assert prompts(feel.selection_list) == ["happy"]
+            assert app.focused is feel.selection_list
+            assert feel.inline_active is False
+        assert read_definitions_file(path).to_mapping() == {
+            "feel": ["happy"],
+            "vibe": ["afro"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_rename_with_tracks_asks_then_migrates(
+        self, temp_beets_library: Library
+    ) -> None:
+        first, second = tracks(temp_beets_library)[:2]
+        set_field(temp_beets_library, first.id, "mood", "happy")
+        set_field(temp_beets_library, second.id, "mood", "happy")
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+r", "ctrl+u", "f", "e", "e", "l", "enter")
+            await pilot.pause()
+            mood = app.query_one("#panel-mood", CategoryPanel)
+            assert mood.confirm_prompt.render().plain == (
+                "Rename category 'mood' to 'feel' on 2 tracks? y/n"
+            )
+            await pilot.press("y")
+            await pilot.pause()
+            feel = app.query_one("#panel-feel", CategoryPanel)
+            assert feel.selection_list.selected == ["happy"]
+            assert app.item.get("feel") == "happy"
+            assert "mood" not in app.item
+            assert app.focused is feel.selection_list
+        assert temp_beets_library.get_item(second.id).get("feel") == "happy"
+        assert "mood" not in temp_beets_library.get_item(second.id)
+
+    @pytest.mark.asyncio
+    async def test_case_only_rename_is_a_plain_rename(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+r", "ctrl+u", "M", "o", "o", "d", "enter")
+            await pilot.pause()
+            assert app.definitions.categories == ["Mood"]
+            assert app.query_one("#panel-Mood", CategoryPanel).category == "Mood"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("typed", "message_part"),
+        [
+            (["ctrl+u", "a", "l", "b", "u", "m", "enter"], "built-in beets field"),
+            (["ctrl+u", "v", "i", "b", "e", "enter"], "already exists"),
+            (["ctrl+u", "1", "x", "enter"], "letters, digits"),
+        ],
+    )
+    async def test_invalid_name_shows_error_and_stays_open(
+        self, temp_beets_library: Library, typed: list[str], message_part: str
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+r", *typed)
+            await pilot.pause()
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.input_active is True
+            assert message_part in panel.input.placeholder
+            assert app.focused is panel.input
+            assert app.definitions.categories == ["mood", "vibe"]
+
+    @needs_list_field
+    @pytest.mark.asyncio
+    async def test_genre_to_genres_moves_values_into_the_list_field(
+        self, temp_beets_library: Library
+    ) -> None:
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "genre", "House, Techno")
+        app = make_app(temp_beets_library, {"genre": ["House", "Techno"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+r", "end", "s", "enter")
+            await pilot.pause()
+            assert "Rename category 'genre' to 'genres' on 1 tracks" in (
+                app.query_one("#panel-genre", CategoryPanel)
+                .confirm_prompt.render()
+                .plain
+            )
+            await pilot.press("y")
+            await pilot.pause()
+            assert app.definitions.categories == [LIST_FIELD]
+            genres = app.query_one(f"#panel-{LIST_FIELD}", CategoryPanel)
+            assert sorted(genres.selection_list.selected) == ["House", "Techno"]
+        item = temp_beets_library.get_item(first.id)
+        assert item[LIST_FIELD] == ["House", "Techno"]
+        assert not item.get("genre")
