@@ -15,6 +15,7 @@ from .definitions_file import write_definitions_file
 from .item_values import read_item_values, write_item_values
 from .widgets.category_panel import CategoryPanel
 from .widgets.custom_selection_list import CustomSelectionList
+from .widgets.inline_input import InlineInput
 from .widgets.input_with_label import InputWithLabel
 from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidget
 
@@ -22,18 +23,6 @@ from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidge
 FALLBACK_TERMINAL_TITLE = "Beets QuickTag"
 
 CATEGORY_PLACEHOLDER = "New category name, Enter to add, Esc to cancel"
-
-
-class NewCategoryInput(Input):
-    """The ctrl+n input, hidden until it is needed.
-
-    Focusing it right after revealing it does not scroll it into view: it had
-    no layout region while hidden, and Textual's focus scroll is skipped for a
-    widget it cannot measure. Scroll once layout has shown it instead.
-    """
-
-    def on_show(self) -> None:
-        self.scroll_visible(animate=False, immediate=True)
 
 
 # Control characters (C0 plus DEL) in metadata could terminate or extend the
@@ -118,10 +107,7 @@ class QuickTagApp(App):
     Screen {
         align: center middle;
     }
-    #new-category-input, #new-category-input:focus {
-        height: 1;
-        border: none;
-        padding: 0 1;
+    #new-category-input {
         margin: 0 1;
     }
     """
@@ -243,11 +229,7 @@ class QuickTagApp(App):
                 yield CategoryPanel(
                     category_name, self.definitions.options(category_name)
                 )
-            new_category_input = NewCategoryInput(
-                id="new-category-input", placeholder=CATEGORY_PLACEHOLDER
-            )
-            new_category_input.display = False
-            yield new_category_input
+            yield InlineInput(id="new-category-input", placeholder=CATEGORY_PLACEHOLDER)
             yield InputWithLabel(input_label="Comments:", id="comments-input")
         else:
             yield Static("No items to tag.")
@@ -294,22 +276,25 @@ class QuickTagApp(App):
         self, message: CategoryPanel.InputOpened
     ) -> None:
         """Keep at most one inline edit open, so Escape is unambiguous."""
-        self._close_other_panel_inputs(except_panel=message.panel)
+        self._close_inline_edits(except_panel=message.panel)
+
+    def _close_inline_edits(self, *, except_panel: CategoryPanel | None = None) -> None:
+        """Close every open inline edit except ``except_panel``'s.
+
+        Focus is left alone: the edit that is taking over already has it.
+        """
+        for panel in self.query(CategoryPanel):
+            if panel is not except_panel and panel.input_active:
+                panel.close_input(refocus=False)
         try:
             new_category_input = self._new_category_input()
         except NoMatches:
             return
-        if new_category_input.display:
-            self._close_new_category_input()
+        if new_category_input.active:
+            new_category_input.close()
 
-    def _close_other_panel_inputs(self, *, except_panel: CategoryPanel | None) -> None:
-        """Close every open panel input except ``except_panel``'s, quietly."""
-        for panel in self.query(CategoryPanel):
-            if panel is not except_panel and panel.input_active:
-                panel.close_input(refocus=False)
-
-    def _new_category_input(self) -> Input:
-        return self.query_one("#new-category-input", Input)
+    def _new_category_input(self) -> InlineInput:
+        return self.query_one("#new-category-input", InlineInput)
 
     def action_add_category(self) -> None:
         """ctrl+n: reveal the new-category input above the comments field."""
@@ -317,21 +302,12 @@ class QuickTagApp(App):
             new_category_input = self._new_category_input()
         except NoMatches:
             return
-        if new_category_input.display:
+        if new_category_input.active:
             # Already open: re-opening would discard what has been typed.
             new_category_input.focus()
             return
-        self._close_other_panel_inputs(except_panel=None)
-        new_category_input.value = ""
-        new_category_input.placeholder = CATEGORY_PLACEHOLDER
-        new_category_input.display = True
-        new_category_input.focus()
-
-    def _close_new_category_input(self) -> None:
-        new_category_input = self._new_category_input()
-        new_category_input.display = False
-        new_category_input.value = ""
-        new_category_input.placeholder = CATEGORY_PLACEHOLDER
+        self._close_inline_edits()
+        new_category_input.open()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter in the new-category input. Panel inputs never reach here
@@ -339,17 +315,16 @@ class QuickTagApp(App):
         if event.input.id != "new-category-input":
             return
         event.stop()
+        new_category_input = self._new_category_input()
         try:
             name = self.definitions.add_category(event.value)
         except ValueError as error:
-            event.input.value = ""
-            event.input.placeholder = str(error)
-            event.input.focus()
+            new_category_input.show_error(str(error))
             return
         self._persist_definitions()
         panel = CategoryPanel(name, [])
-        await self.mount(panel, before=event.input)
-        self._close_new_category_input()
+        await self.mount(panel, before=new_category_input)
+        new_category_input.close()
         panel.selection_list.focus()
 
     async def action_quit(self) -> None:
@@ -380,9 +355,9 @@ class QuickTagApp(App):
             new_category_input = self._new_category_input()
         except NoMatches:
             return False
-        if not new_category_input.display:
+        if not new_category_input.active:
             return False
-        self._close_new_category_input()
+        new_category_input.close()
         self._focus_after_closing_category_input()
         return True
 

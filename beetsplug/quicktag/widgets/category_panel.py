@@ -14,6 +14,7 @@ from textual.widgets import Input
 from textual.widgets.selection_list import Selection
 
 from .custom_selection_list import CustomSelectionList
+from .inline_input import InlineInput
 
 OPTION_PLACEHOLDER = "New option, Enter to add, Esc to cancel"
 
@@ -33,11 +34,7 @@ class CategoryPanel(Vertical):
         border: none;
         padding: 0;
     }
-    CategoryPanel > Input,
-    CategoryPanel > Input:focus {
-        height: 1;
-        border: none;
-        padding: 0 1;
+    CategoryPanel > InlineInput {
         margin-top: 1;
     }
     """
@@ -72,11 +69,7 @@ class CategoryPanel(Vertical):
             *(Selection(Content(option), option) for option in self._initial_options),
             id=f"selection-{self.category}",
         )
-        inline_input = Input(
-            id=f"input-{self.category}", placeholder=OPTION_PLACEHOLDER
-        )
-        inline_input.display = False
-        yield inline_input
+        yield InlineInput(id=f"input-{self.category}", placeholder=OPTION_PLACEHOLDER)
 
     # ---- children ------------------------------------------------------------
 
@@ -85,21 +78,17 @@ class CategoryPanel(Vertical):
         return self.query_one(CustomSelectionList)
 
     @property
-    def input(self) -> Input:
-        return self.query_one(Input)
+    def input(self) -> InlineInput:
+        return self.query_one(InlineInput)
 
     @property
     def input_active(self) -> bool:
-        return bool(self.input.display)
+        return self.input.active
 
     # ---- inline input ----------------------------------------------------------
 
     def open_input(self, placeholder: str = OPTION_PLACEHOLDER) -> None:
-        inline_input = self.input
-        inline_input.value = ""
-        inline_input.placeholder = placeholder
-        inline_input.display = True
-        inline_input.focus()
+        self.input.open(placeholder)
         self.post_message(self.InputOpened(self))
 
     def close_input(self, *, refocus: bool = True) -> None:
@@ -108,19 +97,13 @@ class CategoryPanel(Vertical):
         Closing an input that never had focus (because another one is taking
         over) must not steal focus, hence ``refocus=False``.
         """
-        inline_input = self.input
-        inline_input.display = False
-        inline_input.value = ""
-        inline_input.placeholder = OPTION_PLACEHOLDER
+        self.input.close()
         if refocus:
             self.selection_list.focus()
 
     def show_error(self, message: str) -> None:
         """Show ``message`` on the input line and keep it open for a retry."""
-        inline_input = self.input
-        inline_input.value = ""
-        inline_input.placeholder = message
-        inline_input.focus()
+        self.input.show_error(message)
 
     # ---- options ---------------------------------------------------------------
 
