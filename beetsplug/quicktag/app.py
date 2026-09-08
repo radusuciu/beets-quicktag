@@ -152,7 +152,6 @@ class QuickTagApp(App):
         keep_playing_on_track_change_if_playing_enabled: bool,
         keep_audio_device_awake_enabled: bool = False,
         definitions_path: Path | None = None,
-        query: Sequence[str] = (),
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -160,9 +159,6 @@ class QuickTagApp(App):
         self.items = items
         self.definitions = definitions
         self.definitions_path = definitions_path
-        # Not ``self.query``: that name is ``DOMNode.query``, the widget-tree
-        # search method the App inherits and uses elsewhere in this class.
-        self._query = list(query)
         self.autoplay_on_track_change_enabled = autoplay_on_track_change_enabled
         self.autoplay_at_launch_enabled = autoplay_at_launch_enabled
         self.autonext_at_track_end_enabled = autonext_at_track_end_enabled
@@ -1002,24 +998,32 @@ class QuickTagApp(App):
         """Swap the stale ``Item`` objects for fresh ones and reload the track.
 
         The items were loaded before the migration; saving one of them would
-        write the old values straight back. Re-running the query gives fresh
-        objects in the same order. If the current track no longer matches
-        (e.g. it was found by the value just deleted) it is kept in place from
-        a fresh copy so it can still be tagged and navigated away from.
+        write the old values straight back. Each held track is re-read by id,
+        so the session keeps working through exactly the queue it was launched
+        with, in the same order, whether or not a track still matches the
+        query that found it (it may have been found by the value just
+        deleted). A track deleted from the library meanwhile simply drops out.
         """
         if self.item is None:
             return
         current_id = self.item.id
-        fresh = list(self.lib.items(self._query))
+        by_id = (self.lib.get_item(item.id) for item in self.items)
+        fresh = [item for item in by_id if item is not None]
+        if not fresh:
+            self.items = fresh
+            self.item = None
+            return
         for index, item in enumerate(fresh):
             if item.id == current_id:
                 self.current_item_index = index
                 break
         else:
-            self.current_item_index = min(self.current_item_index, len(fresh))
-            fresh.insert(self.current_item_index, self.lib.get_item(current_id))
+            self.current_item_index = min(self.current_item_index, len(fresh) - 1)
         self.items = fresh
         self.item = fresh[self.current_item_index]
+        # The header is holding the pre-migration Item, and may be showing a
+        # progress message in place of the title.
+        self.header_widget.update_header(self.item)
         await self._load_tags_for_current_item()
 
     def _adopt_option(self, category_name: str, value: str) -> bool:

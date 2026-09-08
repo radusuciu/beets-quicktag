@@ -1,7 +1,6 @@
 """Renaming and deleting options and categories from the TUI, with the
 library migration that goes with them."""
 
-from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -31,11 +30,11 @@ def make_app(
     lib: Library,
     mapping: dict[str, list[str]],
     definitions_path: Path | None = None,
-    query: Sequence[str] = (),
+    items: list[Item] | None = None,
 ) -> QuickTagApp:
     return QuickTagApp(
         lib=lib,
-        items=list(lib.items(list(query))),
+        items=list(lib.items()) if items is None else items,
         definitions=CategoryDefinitions.from_config(mapping),
         autoplay_at_launch_enabled=False,
         autoplay_on_track_change_enabled=False,
@@ -43,7 +42,6 @@ def make_app(
         autosave_on_quit_enabled=False,
         keep_playing_on_track_change_if_playing_enabled=False,
         definitions_path=definitions_path,
-        query=query,
     )
 
 
@@ -342,13 +340,14 @@ class TestReloadAfterMigration:
             assert len(app.items) == len(tracks(temp_beets_library))
 
     @pytest.mark.asyncio
-    async def test_track_that_no_longer_matches_the_query_stays_current(
+    async def test_track_whose_value_was_removed_stays_current(
         self, temp_beets_library: Library
     ) -> None:
         first, second = tracks(temp_beets_library)[:2]
         set_field(temp_beets_library, first.id, "mood", "x")
         set_field(temp_beets_library, second.id, "mood", "x")
-        app = make_app(temp_beets_library, {"mood": ["x"]}, query=["mood:x"])
+        queued = [temp_beets_library.get_item(item.id) for item in (first, second)]
+        app = make_app(temp_beets_library, {"mood": ["x"]}, items=queued)
         async with app.run_test() as pilot:
             assert len(app.items) == 2
             await pilot.press("right")
@@ -362,6 +361,19 @@ class TestReloadAfterMigration:
             assert app.query_one("#selection-mood", CustomSelectionList).selected == []
 
     @pytest.mark.asyncio
+    async def test_reload_refreshes_the_header_item(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test():
+            stale = app.item
+            app.header_widget.show_message("Updating library…")
+            await app._reload_after_migration()
+            assert app.header_widget.item is app.item
+            assert app.header_widget.item is not stale
+            assert header_text(app) == f"Tagging: {app.item.artist} - {app.item.title}"
+
+    @pytest.mark.asyncio
     async def test_show_message_replaces_the_header_line(
         self, temp_beets_library: Library
     ) -> None:
@@ -370,6 +382,34 @@ class TestReloadAfterMigration:
             app.header_widget.show_message("Library update failed")
             await pilot.pause()
             assert header_text(app) == "Library update failed"
+
+
+class TestMigrationKeepsTheQueue:
+    @pytest.mark.asyncio
+    async def test_rename_keeps_every_queued_track(
+        self, temp_beets_library: Library
+    ) -> None:
+        """The session tags the tracks it was launched with, migration or not."""
+        queued = tracks(temp_beets_library)[:3]
+        for item in queued:
+            set_field(temp_beets_library, item.id, "mood", "hiphop")
+        app = make_app(
+            temp_beets_library,
+            {"mood": ["hiphop"]},
+            items=[temp_beets_library.get_item(item.id) for item in queued],
+        )
+        async with app.run_test() as pilot:
+            held = list(app.items)
+            await press_f2_on(app, "mood", 0, pilot)
+            await pilot.press("ctrl+u", "t", "r", "a", "p", "enter")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert len(app.items) == 3
+            assert [item.id for item in app.items] == [item.id for item in queued]
+            assert all(item.get("mood") == "trap" for item in app.items)
+            assert all(new is not old for new, old in zip(app.items, held, strict=True))
+            assert app.items[app.current_item_index] is app.item
 
 
 async def press_f2_on(
