@@ -20,7 +20,7 @@ CAST="$REPO/assets/demo.cast"
 GIF="$REPO/assets/demo.gif"
 SESSION="${QT_DEMO_SESSION:-quicktag-demo}"
 COLS=100
-ROWS=28
+ROWS=36
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/beets-quicktag"
 AGG="$CACHE/agg"
 AGG_VERSION="1.9.0"
@@ -75,20 +75,23 @@ import:
   write: no
 quicktag:
   autosave_on_quit: yes
-  categories:
-    collection:
-      - DJ
-      - Sample
-    mood:
-      - happy
-      - sad
-      - bright
-      - dark
-      - angry
-    energy:
-      - low
-      - medium
-      - high
+YAML
+  # The categories file is written directly rather than seeded from a
+  # `categories` config section, so the first-run "created ..." notice does
+  # not flash past before the TUI takes over. The demo adds to this file.
+  cat >"$SCRATCH/quicktag_categories.yaml" <<YAML
+collection:
+  - DJ
+  - Sample
+mood:
+  - happy
+  - sad
+  - bright
+  - dark
+energy:
+  - low
+  - medium
+  - high
 YAML
   (cd "$REPO" && BEETSDIR="$SCRATCH" uv run beet import -s -q "$SCRATCH/tracks" >/dev/null)
   echo "scratch library: $(cd "$REPO" && BEETSDIR="$SCRATCH" uv run beet ls 2>/dev/null | wc -l) tracks in $SCRATCH"
@@ -124,24 +127,35 @@ record() {
 
   type_text "beet quicktag"; pause 0.6; key Enter
   pause 2.5                       # app up, first track loaded, collection list focused
-  key /;               pause 2                   # play
+  key /;               pause 1.5                 # play
   # Sandstorm. A letter jumps to the next value starting with it, wrapping, so
   # the letters below land on the same values no matter where the highlight is.
-  key Space;           pause 1.2                 # collection: DJ is highlighted at launch
-  key Tab;             pause 0.8                 # mood
-  key h;    pause 0.4; key Space; pause 0.9      # happy
-  key b;    pause 0.4; key Space; pause 1.2      # bright
-  key Tab;             pause 0.8                 # energy
-  key h;    pause 0.4; key Space; pause 1.2      # high
-  key Tab;             pause 0.8                 # comments
-  type_text "peak time, everyone knows the riff"; pause 1.5
-  key Tab;             pause 0.6                 # leave the field so Right changes track
+  key Space;           pause 1.0                 # collection: DJ is highlighted at launch
+  key Tab;             pause 0.6                 # mood
+  key b;    pause 0.3; key Space; pause 0.8      # bright
+  # A value the list does not have yet: + opens an inline input under the
+  # list, Enter appends the value and selects it for this track.
+  key -l +;            pause 0.8
+  type_text "euphoric"; pause 0.5; key Enter; pause 1.5
+  key Tab;             pause 0.6                 # energy
+  key h;    pause 0.3; key Space; pause 1.0      # high
+  # A whole new category: ctrl+n opens an input above the comments field,
+  # Enter adds an empty panel with focus on it, then + fills it in.
+  key C-n;             pause 0.8
+  type_text "vocals"; pause 0.5; key Enter; pause 1.2
+  key -l +;            pause 0.6
+  type_text "instrumental"; pause 0.5; key Enter; pause 1.5
+  key Tab;             pause 0.6                 # comments
+  type_text "peak time, everyone knows the riff"; pause 1.2
+  key Tab;             pause 0.5                 # leave the field so Right changes track
   # Apollo. Tags are saved on the way out; the lists come up empty, but each
-  # keeps the row it had highlighted.
+  # keeps the row it had highlighted, and the new value and category are
+  # still there because they were written to the categories file.
   key Right;           pause 2.5
-  key Space;           pause 1.0                 # collection: DJ
-  key Tab;  pause 0.6; key b; pause 0.4; key Space; pause 1.0   # mood: bright
-  key Tab;  pause 0.6; key m; pause 0.4; key Space; pause 1.8   # energy: medium
+  key Space;           pause 0.8                 # collection: DJ
+  key Tab;  pause 0.5; key e; pause 0.3; key Space; pause 0.8   # mood: euphoric
+  key Tab;  pause 0.5; key m; pause 0.3; key Space; pause 0.8   # energy: medium
+  key Tab;  pause 0.5; key Space; pause 1.5                     # vocals: instrumental
   key Escape                                     # quit, autosave_on_quit
   pause 1.5
   type_text "exit"; key Enter
