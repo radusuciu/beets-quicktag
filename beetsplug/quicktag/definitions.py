@@ -214,7 +214,7 @@ class CategoryDefinitions:
         """
         options = self._require_category(category)
         self._require_option(category, options, old)
-        return self._validate_option_shape(new)
+        return self._validate_option_shape(category, new)
 
     def merge_target(self, category: str, old: str, new: str) -> str | None:
         """The stored spelling of the option ``new`` would merge into, or None.
