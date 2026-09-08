@@ -87,6 +87,16 @@ class TestCountTracks:
         add_track(lib, genres=["CAFÉ"])
         assert count_tracks(lib, LIST_FIELD, "café") == 1
 
+    def test_ignores_values_inherited_from_the_album(self, lib: Library) -> None:
+        """An album-level attribute is not the track's own value."""
+        item_id = add_track(lib)
+        album = lib.add_album([lib.get_item(item_id)])
+        album["mood"] = "happy"
+        album.store(inherit=False)
+        assert lib.get_item(item_id).get("mood") == "happy"
+        assert count_tracks(lib, "mood", "happy") == 0
+        assert count_tracks(lib, "mood") == 0
+
 
 class TestRenameOption:
     def test_renames_whole_token_in_place(self, lib: Library) -> None:
@@ -160,6 +170,66 @@ class TestRenameOption:
         assert value_of(lib, a, "mood") == "Hiphop"
         assert value_of(lib, b, "mood") == "Hiphop"
 
+    def test_failure_before_the_first_store_keeps_its_own_error(
+        self, lib: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """sqlite opens the transaction lazily; a rollback before the first
+        write must not replace the real error with "no transaction is active"."""
+        a = add_track(lib, mood="Hiphop")
+
+        def broken_store(self: Item, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(Item, "store", broken_store)
+        with pytest.raises(RuntimeError, match="disk on fire"):
+            rename_option(lib, "mood", "Hiphop", "Hip-Hop")
+        monkeypatch.undo()
+        assert value_of(lib, a, "mood") == "Hiphop"
+
+    def test_failure_leaves_an_enclosing_transaction_intact(
+        self, lib: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        a = add_track(lib, mood="Hiphop")
+        b = add_track(lib, vibe="x")
+        original_store = Item.store
+
+        def flaky_store(self: Item, *args: object, **kwargs: object) -> None:
+            if self.id == a:
+                raise RuntimeError("disk on fire")
+            original_store(self, *args, **kwargs)
+
+        with lib.transaction():
+            outer = lib.get_item(b)
+            outer["vibe"] = "y"
+            outer.store()
+            monkeypatch.setattr(Item, "store", flaky_store)
+            with pytest.raises(RuntimeError, match="disk on fire"):
+                rename_option(lib, "mood", "Hiphop", "Hip-Hop")
+            monkeypatch.undo()
+        assert value_of(lib, a, "mood") == "Hiphop"
+        assert value_of(lib, b, "vibe") == "y"
+
+    def test_removes_stored_duplicates_of_the_renamed_token(self, lib: Library) -> None:
+        a = add_track(lib, mood="Hiphop, HIPHOP, House")
+        assert rename_option(lib, "mood", "hiphop", "Hip-Hop") == 1
+        assert value_of(lib, a, "mood") == "Hip-Hop, House"
+
+    def test_scans_the_library_inside_the_transaction(
+        self, lib: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A snapshot taken before the lock could overwrite a concurrent write."""
+        add_track(lib, mood="Hiphop")
+        original_items = Library.items
+        in_transaction: list[bool] = []
+
+        def recording_items(self: Library, *args: object) -> object:
+            in_transaction.append(self._connection().in_transaction)
+            return original_items(self, *args)
+
+        monkeypatch.setattr(Library, "items", recording_items)
+        rename_option(lib, "mood", "Hiphop", "Hip-Hop")
+        assert in_transaction == [True]
+
 
 class TestRemoveOption:
     def test_removes_token_and_keeps_the_rest(self, lib: Library) -> None:
@@ -222,7 +292,6 @@ class TestRenameCategory:
     def test_failure_rolls_back_every_track(
         self, lib: Library, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """This migration stores in a loop of its own, not through ``_rewrite``."""
         a = add_track(lib, mood="Hiphop")
         b = add_track(lib, mood="House")
         original_store = Item.store
@@ -242,6 +311,12 @@ class TestRenameCategory:
         assert value_of(lib, b, "mood") == "House"
         assert value_of(lib, a, "vibe") is None
         assert value_of(lib, b, "vibe") is None
+
+    def test_counts_only_tracks_that_had_a_value(self, lib: Library) -> None:
+        add_track(lib, mood="a")
+        add_track(lib, vibe="x")
+        add_track(lib)
+        assert rename_category(lib, "mood", "vibe") == 1
 
     def test_same_name_is_a_no_op(self, lib: Library) -> None:
         a = add_track(lib, mood="a, b")

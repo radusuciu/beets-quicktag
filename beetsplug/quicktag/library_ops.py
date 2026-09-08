@@ -1,8 +1,9 @@
 """Library-wide migrations that keep tracks in step with the definitions.
 
-No Textual here. Every mutating function runs inside one ``lib.transaction()``
-and calls ``item.store()`` only (never ``item.write()``). An exception rolls
-the whole migration back, so the library is never left half-migrated.
+No Textual here. Every mutating function scans and stores inside one
+transaction and calls ``item.store()`` only (never ``item.write()``). An
+exception rolls the whole migration back, so the library is never left
+half-migrated.
 
 Tokens are compared whole and case-insensitively, the same way the app maps a
 track's ``HAPPY`` onto the option ``happy``; ``House`` never matches
@@ -11,79 +12,68 @@ track's ``HAPPY`` onto the option ``happy``; ``House`` never matches
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from beets.library import Item, Library
 
+from .definitions import find_case_insensitive
 from .item_values import read_item_values, write_item_values
 
-
-def _same(a: str, b: str) -> bool:
-    return a.casefold() == b.casefold()
+_SAVEPOINT = "quicktag_migration"
 
 
 def _dedupe(values: list[str]) -> list[str]:
     """Drop case-insensitive duplicates, keeping the first spelling and order."""
-    seen: set[str] = set()
     result: list[str] = []
     for value in values:
-        key = value.casefold()
-        if key not in seen:
-            seen.add(key)
+        if find_case_insensitive(result, value) is None:
             result.append(value)
     return result
 
 
-def _items_with_value(lib: Library, category: str, value: str) -> Iterator[Item]:
-    """Tracks whose ``category`` holds ``value`` as a whole token.
+def _has_value(item: Item, category: str, value: str) -> bool:
+    """True when ``category`` on ``item`` holds ``value`` as a whole token.
 
-    Filtered in Python (like ``_items_with_any_value``) so the comparison is
-    exactly ``_same``'s casefold, whole-token match. A SQL/beets-query
-    prefilter would narrow the scan on a different, ASCII-only notion of
-    case-insensitivity and could reject rows ``_same`` would accept.
-
-    A generator, so counting the matches never materialises them; the
-    migrations consume it inside their transaction.
+    Filtered in Python so the comparison is exactly the app's casefold,
+    whole-token match. A SQL/beets-query prefilter would narrow the scan on
+    a different, ASCII-only notion of case-insensitivity and could reject
+    rows this would accept.
     """
-    return (
-        item
-        for item in lib.items()
-        if any(_same(token, value) for token in read_item_values(item, category))
-    )
-
-
-def _items_with_any_value(lib: Library, category: str) -> Iterator[Item]:
-    return (item for item in lib.items() if read_item_values(item, category))
+    return find_case_insensitive(read_item_values(item, category), value) is not None
 
 
 @contextmanager
 def _migration(lib: Library) -> Iterator[None]:
-    """A root transaction that is rolled back if the body raises.
+    """A transaction whose writes are undone if the body raises.
 
     beets commits a transaction even when its body raised, so the rollback
-    has to be explicit.
+    has to be explicit. It is a savepoint rather than ``ROLLBACK``: sqlite
+    opens the transaction lazily, so a plain rollback before the first write
+    raises and masks the real error, and a savepoint leaves a caller's own
+    uncommitted work intact.
     """
     with lib.transaction() as tx:
+        tx.mutate(f"SAVEPOINT {_SAVEPOINT}")
         try:
             yield
         except BaseException:
-            tx.mutate("ROLLBACK")
+            tx.mutate(f"ROLLBACK TO {_SAVEPOINT}")
+            tx.mutate(f"RELEASE {_SAVEPOINT}")
             raise
+        tx.mutate(f"RELEASE {_SAVEPOINT}")
 
 
-def _rewrite(
-    lib: Library,
-    items: Iterable[Item],
-    category: str,
-    rewrite: Callable[[list[str]], list[str]],
-) -> int:
-    """Store ``rewrite(current values)`` on each item; return how many changed."""
+def _migrate(lib: Library, mutate: Callable[[Item], bool]) -> int:
+    """Store every track ``mutate`` reports as changed; return how many.
+
+    The scan runs inside the transaction, so the rows are read under its
+    lock rather than snapshotted before it.
+    """
     changed = 0
     with _migration(lib):
-        for item in items:
-            values = rewrite(read_item_values(item, category))
-            if write_item_values(item, category, values):
+        for item in lib.items():
+            if mutate(item):
                 item.store()
                 changed += 1
     return changed
@@ -92,8 +82,8 @@ def _rewrite(
 def count_tracks(lib: Library, category: str, value: str | None = None) -> int:
     """Tracks carrying ``value`` in ``category``, or any value when ``None``."""
     if value is None:
-        return sum(1 for _ in _items_with_any_value(lib, category))
-    return sum(1 for _ in _items_with_value(lib, category, value))
+        return sum(1 for item in lib.items() if read_item_values(item, category))
+    return sum(1 for item in lib.items() if _has_value(item, category, value))
 
 
 def rename_option(lib: Library, category: str, old: str, new: str) -> int:
@@ -102,22 +92,30 @@ def rename_option(lib: Library, category: str, old: str, new: str) -> int:
     Renaming onto a value a track already has is a merge: duplicates collapse
     into the first occurrence, so order is preserved.
     """
-    return _rewrite(
-        lib,
-        _items_with_value(lib, category, old),
-        category,
-        lambda values: _dedupe([new if _same(v, old) else v for v in values]),
-    )
+
+    def mutate(item: Item) -> bool:
+        values = _dedupe(read_item_values(item, category))
+        index = find_case_insensitive(values, old)
+        if index is None:
+            return False
+        values[index] = new
+        return write_item_values(item, category, _dedupe(values))
+
+    return _migrate(lib, mutate)
 
 
 def remove_option(lib: Library, category: str, value: str) -> int:
     """Drop ``value`` from every track; the last value blanks or deletes the field."""
-    return _rewrite(
-        lib,
-        _items_with_value(lib, category, value),
-        category,
-        lambda values: [v for v in values if not _same(v, value)],
-    )
+
+    def mutate(item: Item) -> bool:
+        values = _dedupe(read_item_values(item, category))
+        index = find_case_insensitive(values, value)
+        if index is None:
+            return False
+        del values[index]
+        return write_item_values(item, category, values)
+
+    return _migrate(lib, mutate)
 
 
 def rename_category(lib: Library, old: str, new: str) -> int:
@@ -131,17 +129,18 @@ def rename_category(lib: Library, old: str, new: str) -> int:
     """
     if old == new:
         return 0
-    changed = 0
-    with _migration(lib):
-        for item in _items_with_any_value(lib, old):
-            merged = _dedupe(read_item_values(item, new) + read_item_values(item, old))
-            write_item_values(item, new, merged)
-            write_item_values(item, old, [])
-            item.store()
-            changed += 1
-    return changed
+
+    def mutate(item: Item) -> bool:
+        moved = read_item_values(item, old)
+        if not moved:
+            return False
+        write_item_values(item, new, _dedupe(read_item_values(item, new) + moved))
+        write_item_values(item, old, [])
+        return True
+
+    return _migrate(lib, mutate)
 
 
 def remove_category(lib: Library, name: str) -> int:
     """Clear ``name`` on every track that has a value for it."""
-    return _rewrite(lib, _items_with_any_value(lib, name), name, lambda values: [])
+    return _migrate(lib, lambda item: write_item_values(item, name, []))
