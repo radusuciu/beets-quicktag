@@ -9,6 +9,8 @@ both inline widgets are hidden.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -101,18 +103,14 @@ class CategoryPanel(Vertical):
             self.value = value
 
     class Confirmed(Message):
-        """The user answered ``y`` to the panel's confirm prompt."""
+        """The user answered ``y``; ``run`` is what they agreed to."""
 
-        def __init__(self, panel: CategoryPanel) -> None:
+        def __init__(
+            self, panel: CategoryPanel, run: Callable[[], Awaitable[None]]
+        ) -> None:
             super().__init__()
             self.panel = panel
-
-    class ConfirmCancelled(Message):
-        """The user answered ``n`` to the panel's confirm prompt."""
-
-        def __init__(self, panel: CategoryPanel) -> None:
-            super().__init__()
-            self.panel = panel
+            self.run = run
 
     class InputOpened(Message):
         """The panel's inline line (input or confirm) has just been revealed.
@@ -130,8 +128,13 @@ class CategoryPanel(Vertical):
         self.category = category
         self._initial_options = list(options)
         self.border_title = Content(category)
-        self.edit_kind: EditKind | None = None
+        # What the inline input is open for. ``ADD_OPTION`` is the resting
+        # value, matching the input's idle placeholder.
+        self.edit_kind: EditKind = EditKind.ADD_OPTION
         self.edit_target: str | None = None
+        # What ``y`` on the confirm prompt runs; dropped whenever the prompt
+        # closes, however it closes.
+        self._confirm_run: Callable[[], Awaitable[None]] | None = None
 
     def compose(self) -> ComposeResult:
         yield CustomSelectionList(
@@ -177,7 +180,6 @@ class CategoryPanel(Vertical):
         *,
         target: str | None = None,
         initial: str = "",
-        placeholder: str | None = None,
     ) -> None:
         """Reveal the input for ``kind``; ``target`` is the option being renamed."""
         if self.confirm_active:
@@ -185,7 +187,7 @@ class CategoryPanel(Vertical):
         self.edit_kind = kind
         self.edit_target = target
         inline_input = self.input
-        inline_input.open(placeholder or _PLACEHOLDERS[kind])
+        inline_input.open(_PLACEHOLDERS[kind])
         inline_input.value = initial
         inline_input.cursor_position = len(initial)
         self.post_message(self.InputOpened(self))
@@ -197,7 +199,7 @@ class CategoryPanel(Vertical):
         over) must not steal focus, hence ``refocus=False``.
         """
         self.input.close()
-        self.edit_kind = None
+        self.edit_kind = EditKind.ADD_OPTION
         self.edit_target = None
         if refocus:
             self.selection_list.focus()
@@ -208,10 +210,11 @@ class CategoryPanel(Vertical):
 
     # ---- confirm prompt ----------------------------------------------------------
 
-    def open_confirm(self, question: str) -> None:
-        """Replace the inline line with a y/n ``question`` and focus it."""
+    def open_confirm(self, question: str, run: Callable[[], Awaitable[None]]) -> None:
+        """Replace the inline line with a y/n ``question``; ``y`` runs ``run``."""
         if self.input_active:
             self.close_input(refocus=False)
+        self._confirm_run = run
         prompt = self.confirm_prompt
         prompt.update(question)
         prompt.display = True
@@ -219,6 +222,8 @@ class CategoryPanel(Vertical):
         self.post_message(self.InputOpened(self))
 
     def close_confirm(self, *, refocus: bool = True) -> None:
+        """Hide the prompt and forget what it would have run."""
+        self._confirm_run = None
         prompt = self.confirm_prompt
         prompt.display = False
         prompt.update("")
@@ -274,18 +279,12 @@ class CategoryPanel(Vertical):
         # input's submissions.
         event.stop()
         self.post_message(
-            self.InlineSubmitted(
-                self,
-                self.edit_kind or EditKind.ADD_OPTION,
-                self.edit_target,
-                event.value,
-            )
+            self.InlineSubmitted(self, self.edit_kind, self.edit_target, event.value)
         )
 
     def on_confirm_prompt_answered(self, message: ConfirmPrompt.Answered) -> None:
         message.stop()
+        run = self._confirm_run
         self.close_confirm()
-        if message.confirmed:
-            self.post_message(self.Confirmed(self))
-        else:
-            self.post_message(self.ConfirmCancelled(self))
+        if message.confirmed and run is not None:
+            self.post_message(self.Confirmed(self, run))

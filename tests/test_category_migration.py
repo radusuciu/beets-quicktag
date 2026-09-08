@@ -6,68 +6,96 @@ from pathlib import Path
 import pytest
 from beets.library import Item, Library
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Static
+from textual.pilot import Pilot
+from textual.widgets import Input
 from textual.widgets.selection_list import Selection
 
 from beetsplug.quicktag.app import QuickTagApp
-from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.definitions_file import read_definitions_file
+from beetsplug.quicktag.item_values import split_value, write_item_values
 from beetsplug.quicktag.widgets.category_panel import CategoryPanel
 from beetsplug.quicktag.widgets.custom_selection_list import (
     CustomSelectionList,
     EditKind,
 )
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
-
-LIST_FIELD = "genres"
-needs_list_field = pytest.mark.skipif(
-    not CategoryDefinitions.is_list_field(LIST_FIELD),
-    reason="installed beets has no list-valued 'genres' field",
+from conftest import (
+    LIST_FIELD,
+    header_text,
+    make_app,
+    needs_list_field,
+    prompts,
+    settle,
 )
 
+KEY_FOR = {
+    EditKind.ADD_OPTION: "plus",
+    EditKind.RENAME_OPTION: "f2",
+    EditKind.REMOVE_OPTION: "delete",
+    EditKind.RENAME_CATEGORY: "ctrl+r",
+    EditKind.REMOVE_CATEGORY: "ctrl+d",
+}
 
-def make_app(
-    lib: Library,
-    mapping: dict[str, list[str]],
-    definitions_path: Path | None = None,
-    items: list[Item] | None = None,
-) -> QuickTagApp:
-    return QuickTagApp(
-        lib=lib,
-        items=list(lib.items()) if items is None else items,
-        definitions=CategoryDefinitions.from_config(mapping),
-        autoplay_at_launch_enabled=False,
-        autoplay_on_track_change_enabled=False,
-        autonext_at_track_end_enabled=False,
-        autosave_on_quit_enabled=False,
-        keep_playing_on_track_change_if_playing_enabled=False,
-        definitions_path=definitions_path,
-    )
-
-
-def header_text(app: QuickTagApp) -> str:
-    return app.query_one("#header_text_content", Static).render().plain
-
-
-def prompts(selection_list: CustomSelectionList) -> list[str]:
-    return [
-        str(selection_list.get_option_at_index(i).prompt)
-        for i in range(selection_list.option_count)
-    ]
+# The migration each kind runs, as patched in ``beetsplug.quicktag.app``.
+MIGRATION_FOR = {
+    EditKind.RENAME_OPTION: "rename_option",
+    EditKind.REMOVE_OPTION: "remove_option",
+    EditKind.RENAME_CATEGORY: "rename_category",
+    EditKind.REMOVE_CATEGORY: "remove_category",
+}
 
 
 def tracks(lib: Library) -> list[Item]:
     return list(lib.items())
 
 
-def set_field(lib: Library, item_id: int, field: str, value: object) -> None:
+def set_field(lib: Library, item_id: int, field: str, value: str | None) -> None:
+    """Seed a track through the helper the app itself writes with."""
     item = lib.get_item(item_id)
-    if value is None:
-        if field in item:
-            del item[field]
-    else:
-        item[field] = value
+    write_item_values(item, field, split_value(value))
     item.store()
+
+
+def panel_of(app: QuickTagApp, category: str) -> CategoryPanel:
+    return app.query_one(f"#panel-{category}", CategoryPanel)
+
+
+async def start_edit(
+    app: QuickTagApp,
+    pilot: Pilot[None],
+    kind: EditKind,
+    category: str = "mood",
+    index: int = 0,
+) -> CategoryPanel:
+    """Press the key for ``kind`` on ``category``'s list (option kinds act on
+    the option at ``index``) and wait for whatever it opens."""
+    selection_list = app.query_one(f"#selection-{category}", CustomSelectionList)
+    selection_list.focus()
+    if kind in (EditKind.RENAME_OPTION, EditKind.REMOVE_OPTION):
+        selection_list.highlighted = index
+    await pilot.press(KEY_FOR[kind])
+    await settle(app, pilot)
+    return panel_of(app, category)
+
+
+async def submit(app: QuickTagApp, pilot: Pilot[None], *keys: str) -> None:
+    """Type ``keys`` into the open inline input and press Enter."""
+    await pilot.press("ctrl+u", *keys, "enter")
+    await settle(app, pilot)
+
+
+async def answer(app: QuickTagApp, pilot: Pilot[None], key: str) -> None:
+    """Answer the open y/n prompt and wait for the edit to finish."""
+    await pilot.press(key)
+    await settle(app, pilot)
+
+
+async def run_nothing() -> None:
+    pass
+
+
+async def must_not_run() -> None:
+    raise AssertionError("the abandoned action must not run")
 
 
 class ListHost(App[None]):
@@ -144,8 +172,8 @@ class TestPanelInline:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            panel.open_confirm("Sure? y/n")
+            panel = panel_of(app, "mood")
+            panel.open_confirm("Sure? y/n", run_nothing)
             await pilot.pause()
             assert panel.confirm_active is True
             assert panel.inline_active is True
@@ -154,81 +182,63 @@ class TestPanelInline:
             assert panel.confirm_prompt.render().plain == "Sure? y/n"
 
     @pytest.mark.asyncio
-    async def test_n_closes_confirm_and_refocuses_list(
+    async def test_y_runs_the_action_once_and_refocuses_the_list(
         self, temp_beets_library: Library
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = panel_of(app, "mood")
             ran: list[bool] = []
 
             async def run() -> None:
                 ran.append(True)
 
-            app._ask(panel, "Sure? y/n", run)
-            await pilot.pause()
-            await pilot.press("n")
-            await pilot.pause()
-            assert ran == []
-            assert panel.confirm_active is False
-            assert app.focused is panel.selection_list
-
-    @pytest.mark.asyncio
-    async def test_n_clears_the_pending_action(
-        self, temp_beets_library: Library
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy"]})
-        async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
-
-            async def run() -> None:
-                raise AssertionError("the cancelled action must not run")
-
-            app._ask(panel, "Sure? y/n", run)
-            await pilot.pause()
-            await pilot.press("n")
-            await pilot.pause()
-            assert panel.confirm_active is False
-            assert app._pending_confirm is None
-
-    @pytest.mark.asyncio
-    async def test_opening_another_input_clears_the_pending_action(
-        self, temp_beets_library: Library
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy"]})
-        async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
-
-            async def run() -> None:
-                raise AssertionError("the abandoned action must not run")
-
-            app._ask(panel, "Sure? y/n", run)
-            await pilot.pause()
-            await pilot.press("ctrl+n")
-            await pilot.pause()
-            assert panel.confirm_active is False
-            assert app._pending_confirm is None
-
-    @pytest.mark.asyncio
-    async def test_y_runs_the_pending_action_once(
-        self, temp_beets_library: Library
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy"]})
-        async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            ran: list[bool] = []
-
-            async def run() -> None:
-                ran.append(True)
-
-            app._ask(panel, "Sure? y/n", run)
+            panel.open_confirm("Sure? y/n", run)
             await pilot.pause()
             await pilot.press("y")
             await pilot.pause()
             assert ran == [True]
             assert panel.confirm_active is False
             assert app.focused is panel.selection_list
-            assert app._pending_confirm is None
+            # A second ``y`` reaches the list, not a stale action.
+            await pilot.press("y")
+            await pilot.pause()
+            assert ran == [True]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key", ["n", "escape"])
+    async def test_n_or_escape_closes_confirm_without_running(
+        self, temp_beets_library: Library, key: str
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = panel_of(app, "mood")
+            panel.open_confirm("Sure? y/n", must_not_run)
+            await pilot.pause()
+            await pilot.press(key)
+            await pilot.pause()
+            assert panel.confirm_active is False
+            assert app.focused is panel.selection_list
+            assert app.is_running
+            await pilot.press("y")
+            await pilot.pause()
+
+    @pytest.mark.asyncio
+    async def test_ctrl_n_closes_an_open_confirm_and_drops_its_action(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            panel = panel_of(app, "mood")
+            panel.open_confirm("Sure? y/n", must_not_run)
+            await pilot.pause()
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert panel.confirm_active is False
+            assert app.focused is app.query_one("#new-category-input", Input)
+            await pilot.press("escape")
+            await pilot.press("y")
+            await pilot.pause()
 
     @pytest.mark.asyncio
     async def test_y_is_typed_into_an_open_input_not_confirmed(
@@ -237,28 +247,7 @@ class TestPanelInline:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
             await pilot.press("plus", "y")
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.input.value == "y"
-
-    @pytest.mark.asyncio
-    async def test_escape_cancels_confirm_and_does_not_quit(
-        self, temp_beets_library: Library
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy"]})
-        async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
-
-            async def run() -> None:
-                raise AssertionError("must not run")
-
-            app._ask(panel, "Sure? y/n", run)
-            await pilot.pause()
-            await pilot.press("escape")
-            await pilot.pause()
-            assert panel.confirm_active is False
-            assert app.focused is panel.selection_list
-            assert app._pending_confirm is None
-            assert app.is_running
+            assert panel_of(app, "mood").input.value == "y"
 
     @pytest.mark.asyncio
     async def test_confirm_replaces_an_open_input_and_vice_versa(
@@ -266,9 +255,9 @@ class TestPanelInline:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = panel_of(app, "mood")
             await pilot.press("plus", "x")
-            panel.open_confirm("Sure? y/n")
+            panel.open_confirm("Sure? y/n", must_not_run)
             await pilot.pause()
             assert panel.input_active is False
             assert panel.input.value == ""
@@ -278,20 +267,10 @@ class TestPanelInline:
             assert panel.confirm_active is False
             assert panel.input_active is True
             assert app.focused is panel.input
-
-    @pytest.mark.asyncio
-    async def test_ctrl_n_closes_an_open_confirm(
-        self, temp_beets_library: Library
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy"]})
-        async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            panel.open_confirm("Sure? y/n")
+            # Reopening the input forgot the action along with the prompt.
+            panel.close_input()
+            await pilot.press("y")
             await pilot.pause()
-            await pilot.press("ctrl+n")
-            await pilot.pause()
-            assert panel.confirm_active is False
-            assert app.focused is app.query_one("#new-category-input", Input)
 
     @pytest.mark.asyncio
     async def test_confirm_in_one_panel_closes_input_in_another(
@@ -300,9 +279,9 @@ class TestPanelInline:
         app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
         async with app.run_test() as pilot:
             await pilot.press("plus", "x")
-            mood = app.query_one("#panel-mood", CategoryPanel)
-            vibe = app.query_one("#panel-vibe", CategoryPanel)
-            vibe.open_confirm("Sure? y/n")
+            mood = panel_of(app, "mood")
+            vibe = panel_of(app, "vibe")
+            vibe.open_confirm("Sure? y/n", run_nothing)
             await pilot.pause()
             assert mood.input_active is False
             assert vibe.confirm_active is True
@@ -314,7 +293,7 @@ class TestPanelInline:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = panel_of(app, "mood")
             panel.open_input(EditKind.RENAME_OPTION, target="happy", initial="happy")
             await pilot.pause()
             assert panel.input.value == "happy"
@@ -323,7 +302,7 @@ class TestPanelInline:
             assert panel.edit_kind is EditKind.RENAME_OPTION
             assert panel.edit_target == "happy"
             panel.close_input()
-            assert panel.edit_kind is None
+            assert panel.edit_kind is EditKind.ADD_OPTION
             assert panel.edit_target is None
 
     @pytest.mark.asyncio
@@ -332,7 +311,7 @@ class TestPanelInline:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy", "sad", "calm"]})
         async with app.run_test() as pilot:
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = panel_of(app, "mood")
             panel.selection_list.select("sad")
             panel.set_options(["happy", "calm"], highlighted=2)
             await pilot.pause()
@@ -343,6 +322,36 @@ class TestPanelInline:
             await pilot.pause()
             assert panel.selection_list.option_count == 0
             assert panel.selection_list.highlighted is None
+
+
+class TestHeaderMessages:
+    @pytest.mark.asyncio
+    async def test_show_message_replaces_the_title_until_cleared(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["x"]})
+        async with app.run_test() as pilot:
+            title = header_text(app)
+            app.header_widget.show_message("Library update failed")
+            await pilot.pause()
+            assert header_text(app) == "Library update failed"
+            app.header_widget.update_header(app.item)
+            assert header_text(app) == "Library update failed"
+            app.header_widget.clear_message()
+            assert header_text(app) == title
+
+    @pytest.mark.asyncio
+    async def test_track_change_clears_a_message(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["x"]})
+        async with app.run_test() as pilot:
+            app.header_widget.show_message("Something happened")
+            await pilot.press("right")
+            await pilot.pause()
+            assert header_text(app) == (
+                f"Tagging: {app.item.artist} - {app.item.title}"
+            )
 
 
 class TestReloadAfterMigration:
@@ -397,29 +406,31 @@ class TestReloadAfterMigration:
             assert app.query_one("#selection-mood", CustomSelectionList).selected == []
 
     @pytest.mark.asyncio
-    async def test_reload_refreshes_the_header_item(
+    async def test_reload_keeps_a_message_on_screen(
         self, temp_beets_library: Library
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test():
             stale = app.item
-            app.header_widget.show_message("Updating library…")
+            app.header_widget.show_message("Could not write categories file")
             await app._reload_after_migration()
             assert app.header_widget.item is app.item
             assert app.header_widget.item is not stale
-            # The reload only refreshes the stored reference: it must not
-            # re-render the title over a message still on screen.
-            assert header_text(app) == "Updating library…"
+            assert header_text(app) == "Could not write categories file"
 
     @pytest.mark.asyncio
-    async def test_show_message_replaces_the_header_line(
+    async def test_queue_gone_from_the_library_is_reported_and_kept(
         self, temp_beets_library: Library
     ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["x"]})
-        async with app.run_test() as pilot:
-            app.header_widget.show_message("Library update failed")
-            await pilot.pause()
-            assert header_text(app) == "Library update failed"
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test():
+            held = list(app.items)
+            for item in held:
+                item.remove()
+            await app._reload_after_migration()
+            assert app.item is held[0]
+            assert app.items == held
+            assert "queued tracks" in header_text(app)
 
 
 class TestMigrationKeepsTheQueue:
@@ -438,25 +449,246 @@ class TestMigrationKeepsTheQueue:
         )
         async with app.run_test() as pilot:
             held = list(app.items)
-            await press_f2_on(app, "mood", 0, pilot)
-            await pilot.press("ctrl+u", "t", "r", "a", "p", "enter")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
+            await start_edit(app, pilot, EditKind.RENAME_OPTION)
+            await submit(app, pilot, "t", "r", "a", "p")
+            await answer(app, pilot, "y")
             assert len(app.items) == 3
             assert [item.id for item in app.items] == [item.id for item in queued]
             assert all(item.get("mood") == "trap" for item in app.items)
             assert all(new is not old for new, old in zip(app.items, held, strict=True))
             assert app.items[app.current_item_index] is app.item
 
+    @pytest.mark.asyncio
+    async def test_edit_that_changes_no_track_keeps_the_same_items(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            held = list(app.items)
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            await answer(app, pilot, "y")
+            assert app.definitions.options("mood") == ["happy"]
+            assert prompts(panel.selection_list) == ["happy"]
+            assert app.items == held
+            assert app.item is held[0]
 
-async def press_f2_on(
-    app: QuickTagApp, category: str, index: int, pilot: object
-) -> None:
-    """Highlight option ``index`` of ``category`` and press F2."""
-    app.query_one(f"#selection-{category}", CustomSelectionList).highlighted = index
-    await pilot.press("f2")  # type: ignore[attr-defined]
-    await pilot.pause()  # type: ignore[attr-defined]
+
+class TestEditFlowsShared:
+    """Behaviour every rename and delete flow has in common."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", [EditKind.RENAME_OPTION, EditKind.RENAME_CATEGORY])
+    async def test_unchanged_name_just_closes(
+        self, temp_beets_library: Library, kind: EditKind
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, kind, index=1)
+            await pilot.press("enter")
+            await settle(app, pilot)
+            assert panel.inline_active is False
+            assert app.focused is panel.selection_list
+            assert app.definitions.to_mapping() == {"mood": ["happy", "sad"]}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("kind", "typed", "message_part"),
+        [
+            (EditKind.RENAME_OPTION, [], "cannot be empty"),
+            (EditKind.RENAME_OPTION, ["a", "comma", "b"], "cannot contain a comma"),
+            (EditKind.RENAME_CATEGORY, [*"album"], "built-in beets field"),
+            (EditKind.RENAME_CATEGORY, [*"vibe"], "already exists"),
+            (EditKind.RENAME_CATEGORY, ["1", "x"], "letters, digits"),
+        ],
+    )
+    async def test_invalid_name_shows_error_and_stays_open(
+        self,
+        temp_beets_library: Library,
+        kind: EditKind,
+        typed: list[str],
+        message_part: str,
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, kind, index=1)
+            await submit(app, pilot, *typed)
+            assert panel.input_active is True
+            assert message_part in panel.input.placeholder
+            assert app.focused is panel.input
+            assert app.definitions.to_mapping() == {
+                "mood": ["happy", "sad"],
+                "vibe": ["afro"],
+            }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("kind", "expected"),
+        [
+            (EditKind.RENAME_OPTION, "Rename 'sad' to 'x' on 1 tracks? y/n"),
+            (EditKind.REMOVE_OPTION, "Delete 'sad' from 1 tracks? y/n"),
+            (
+                EditKind.RENAME_CATEGORY,
+                "Rename category 'mood' to 'x' on 1 tracks? y/n",
+            ),
+            (
+                EditKind.REMOVE_CATEGORY,
+                "Delete category 'mood' and its values from 1 tracks? y/n",
+            ),
+        ],
+    )
+    async def test_pending_selection_is_saved_before_counting(
+        self, temp_beets_library: Library, kind: EditKind, expected: str
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).select("sad")
+            panel = await start_edit(app, pilot, kind, index=1)
+            if panel.input_active:
+                await submit(app, pilot, "x")
+            assert panel.confirm_prompt.render().plain == expected
+        assert temp_beets_library.get_item(app.item.id).get("mood") == "sad"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key", ["n", "escape"])
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            EditKind.RENAME_OPTION,
+            EditKind.REMOVE_OPTION,
+            EditKind.RENAME_CATEGORY,
+            EditKind.REMOVE_CATEGORY,
+        ],
+    )
+    async def test_n_or_escape_cancels(
+        self, temp_beets_library: Library, kind: EditKind, key: str
+    ) -> None:
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, kind, index=1)
+            if panel.input_active:
+                await submit(app, pilot, "x")
+            assert panel.confirm_active is True
+            await answer(app, pilot, key)
+            assert panel.inline_active is False
+            assert app.definitions.to_mapping() == {"mood": ["happy", "sad"]}
+            assert panel.selection_list.selected == ["sad"]
+            assert app.focused is panel.selection_list
+            assert app.is_running
+        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            EditKind.RENAME_OPTION,
+            EditKind.REMOVE_OPTION,
+            EditKind.RENAME_CATEGORY,
+            EditKind.REMOVE_CATEGORY,
+        ],
+    )
+    async def test_migration_failure_changes_nothing_and_says_so(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        kind: EditKind,
+    ) -> None:
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
+
+        def explode(*args: object, **kwargs: object) -> int:
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(f"beetsplug.quicktag.app.{MIGRATION_FOR[kind]}", explode)
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, kind, index=1)
+            if panel.input_active:
+                await submit(app, pilot, "x")
+            await answer(app, pilot, "y")
+            assert "Library update failed" in header_text(app)
+            assert "disk on fire" in header_text(app)
+            assert app.definitions.to_mapping() == {"mood": ["happy", "sad"]}
+            assert [p.id for p in app.query(CategoryPanel)] == ["panel-mood"]
+            assert prompts(panel.selection_list) == ["happy", "sad"]
+            assert panel.selection_list.selected == ["sad"]
+            assert panel.inline_active is False
+            assert app.focused is panel.selection_list
+            assert app.is_running
+        assert not path.exists()
+        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+
+    @pytest.mark.asyncio
+    async def test_header_says_the_library_is_being_updated(
+        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The message must reach the screen, so the migration cannot hold
+        the event loop: reading the header from the migration's thread only
+        completes if the loop is free to serve it."""
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        seen: list[str] = []
+
+        def slow_migration(*args: object, **kwargs: object) -> int:
+            seen.append(app.call_from_thread(header_text, app))
+            return 0
+
+        monkeypatch.setattr("beetsplug.quicktag.app.remove_option", slow_migration)
+        async with app.run_test() as pilot:
+            await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            await answer(app, pilot, "y")
+            assert seen == ["Updating library…"]
+            assert header_text(app) == (
+                f"Tagging: {app.item.artist} - {app.item.title}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_unwritable_definitions_file_is_reported_and_the_track_reloaded(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        """The library is updated whatever happens to the file afterwards,
+        so the track must be reloaded or the next save writes the old value
+        back; and the warning must outlive that reload."""
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        path = tmp_path / "missing" / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            await answer(app, pilot, "y")
+            assert "Could not write categories file" in header_text(app)
+            assert app.definitions.options("mood") == ["happy"]
+            assert app.item.get("mood") is None
+            assert panel.selection_list.selected == []
+            assert app.is_running
+            await pilot.press("right")
+            await pilot.pause()
+        assert not path.exists()
+        assert "mood" not in temp_beets_library.get_item(first.id)
+
+
+class TestTrackChangeWhileEditing:
+    @pytest.mark.asyncio
+    async def test_changing_track_withdraws_the_confirm(
+        self, temp_beets_library: Library
+    ) -> None:
+        """Left/Right reach the app while the prompt has focus."""
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            assert panel.confirm_active is True
+            await pilot.press("right")
+            await pilot.pause()
+            assert app.current_item_index == 1
+            assert panel.confirm_active is False
+            assert app.focused is panel.selection_list
+            await answer(app, pilot, "y")
+            assert app.definitions.options("mood") == ["happy", "sad"]
+        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
 
 
 class TestRenameOptionFlow:
@@ -466,27 +698,12 @@ class TestRenameOptionFlow:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
         async with app.run_test() as pilot:
-            await press_f2_on(app, "mood", 1, pilot)
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.RENAME_OPTION, index=1)
             assert panel.input_active is True
             assert panel.input.value == "sad"
             assert app.focused is panel.input
             assert panel.edit_kind is EditKind.RENAME_OPTION
             assert "rename" in panel.input.placeholder
-
-    @pytest.mark.asyncio
-    async def test_unchanged_name_just_closes(
-        self, temp_beets_library: Library
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
-        async with app.run_test() as pilot:
-            await press_f2_on(app, "mood", 1, pilot)
-            await pilot.press("enter")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.inline_active is False
-            assert app.focused is panel.selection_list
-            assert app.definitions.options("mood") == ["happy", "sad"]
 
     @pytest.mark.asyncio
     async def test_rename_with_no_tracks_applies_immediately(
@@ -495,10 +712,8 @@ class TestRenameOptionFlow:
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
         async with app.run_test() as pilot:
-            await press_f2_on(app, "mood", 1, pilot)
-            await pilot.press("ctrl+u", "b", "l", "u", "e", "enter")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.RENAME_OPTION, index=1)
+            await submit(app, pilot, "b", "l", "u", "e")
             assert panel.inline_active is False
             assert app.definitions.options("mood") == ["happy", "blue"]
             assert prompts(panel.selection_list) == ["happy", "blue"]
@@ -516,17 +731,14 @@ class TestRenameOptionFlow:
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
         async with app.run_test() as pilot:
-            await press_f2_on(app, "mood", 1, pilot)
-            await pilot.press("ctrl+u", "b", "l", "u", "e", "enter")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.RENAME_OPTION, index=1)
+            await submit(app, pilot, "b", "l", "u", "e")
             assert panel.confirm_active is True
             assert panel.confirm_prompt.render().plain == (
                 "Rename 'sad' to 'blue' on 2 tracks? y/n"
             )
             assert app.definitions.options("mood") == ["happy", "sad"]
-            await pilot.press("y")
-            await pilot.pause()
+            await answer(app, pilot, "y")
             assert panel.inline_active is False
             assert app.definitions.options("mood") == ["happy", "blue"]
             assert prompts(panel.selection_list) == ["happy", "blue"]
@@ -538,38 +750,6 @@ class TestRenameOptionFlow:
         assert read_definitions_file(path).options("mood") == ["happy", "blue"]
 
     @pytest.mark.asyncio
-    async def test_pending_selection_is_saved_before_counting(
-        self, temp_beets_library: Library
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
-        async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).select("sad")
-            await press_f2_on(app, "mood", 1, pilot)
-            await pilot.press("ctrl+u", "x", "enter")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.confirm_prompt.render().plain == (
-                "Rename 'sad' to 'x' on 1 tracks? y/n"
-            )
-
-    @pytest.mark.asyncio
-    async def test_n_cancels_the_rename(self, temp_beets_library: Library) -> None:
-        first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
-        async with app.run_test() as pilot:
-            await press_f2_on(app, "mood", 1, pilot)
-            await pilot.press("ctrl+u", "x", "enter")
-            await pilot.pause()
-            await pilot.press("n")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.inline_active is False
-            assert app.definitions.options("mood") == ["happy", "sad"]
-            assert app.focused is panel.selection_list
-        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
-
-    @pytest.mark.asyncio
     async def test_merge_asks_and_uses_the_existing_spelling(
         self, temp_beets_library: Library
     ) -> None:
@@ -577,15 +757,12 @@ class TestRenameOptionFlow:
         set_field(temp_beets_library, first.id, "mood", "Hiphop")
         app = make_app(temp_beets_library, {"mood": ["Hiphop", "Hip-Hop"]})
         async with app.run_test() as pilot:
-            await press_f2_on(app, "mood", 0, pilot)
-            await pilot.press("ctrl+u", "h", "i", "p", "minus", "h", "o", "p", "enter")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.RENAME_OPTION)
+            await submit(app, pilot, *"hip", "minus", *"hop")
             assert panel.confirm_prompt.render().plain == (
                 "Merge 'Hiphop' into 'Hip-Hop' on 1 tracks? y/n"
             )
-            await pilot.press("y")
-            await pilot.pause()
+            await answer(app, pilot, "y")
             assert app.definitions.options("mood") == ["Hip-Hop"]
             assert prompts(panel.selection_list) == ["Hip-Hop"]
             assert panel.selection_list.selected == ["Hip-Hop"]
@@ -598,67 +775,22 @@ class TestRenameOptionFlow:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["Hiphop", "Hip-Hop"]})
         async with app.run_test() as pilot:
-            await press_f2_on(app, "mood", 0, pilot)
-            await pilot.press("ctrl+u", "h", "i", "p", "minus", "h", "o", "p", "enter")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.RENAME_OPTION)
+            await submit(app, pilot, *"hip", "minus", *"hop")
             assert panel.confirm_active is True
             assert "0 tracks" in panel.confirm_prompt.render().plain
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("typed", "message_part"),
-        [
-            (["ctrl+u", "enter"], "cannot be empty"),
-            (["ctrl+u", "a", "comma", "b", "enter"], "cannot contain a comma"),
-        ],
-    )
-    async def test_invalid_name_shows_error_and_stays_open(
-        self, temp_beets_library: Library, typed: list[str], message_part: str
+    async def test_merge_by_exact_spelling_is_still_a_merge(
+        self, temp_beets_library: Library
     ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        app = make_app(temp_beets_library, {"mood": ["Hiphop", "Hip-Hop"]})
         async with app.run_test() as pilot:
-            await press_f2_on(app, "mood", 1, pilot)
-            await pilot.press(*typed)
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.input_active is True
-            assert message_part in panel.input.placeholder
-            assert app.focused is panel.input
-            assert app.definitions.options("mood") == ["happy", "sad"]
-
-    @pytest.mark.asyncio
-    async def test_migration_failure_changes_nothing_and_says_so(
-        self,
-        temp_beets_library: Library,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        path = tmp_path / "quicktag_categories.yaml"
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
-
-        def explode(*args: object, **kwargs: object) -> int:
-            raise RuntimeError("disk on fire")
-
-        monkeypatch.setattr("beetsplug.quicktag.app.rename_option", explode)
-        async with app.run_test() as pilot:
-            await press_f2_on(app, "mood", 1, pilot)
-            await pilot.press("ctrl+u", "x", "enter")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert "Library update failed" in header_text(app)
-            assert "disk on fire" in header_text(app)
-            assert app.definitions.options("mood") == ["happy", "sad"]
-            assert prompts(panel.selection_list) == ["happy", "sad"]
-            assert panel.selection_list.selected == ["sad"]
-            assert panel.inline_active is False
-            assert app.focused is panel.selection_list
-        assert not path.exists()
-        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+            panel = await start_edit(app, pilot, EditKind.RENAME_OPTION)
+            await submit(app, pilot, *"Hip", "minus", *"Hop")
+            assert panel.confirm_prompt.render().plain == (
+                "Merge 'Hiphop' into 'Hip-Hop' on 0 tracks? y/n"
+            )
 
 
 class TestRemoveOptionFlow:
@@ -671,10 +803,7 @@ class TestRemoveOptionFlow:
         set_field(temp_beets_library, second.id, "mood", "sad, happy")
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
         async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
-            await pilot.press("delete")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
             assert panel.confirm_active is True
             assert panel.confirm_prompt.render().plain == (
                 "Delete 'sad' from 2 tracks? y/n"
@@ -687,10 +816,7 @@ class TestRemoveOptionFlow:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
         async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
-            await pilot.press("delete")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
             assert panel.confirm_prompt.render().plain == (
                 "Delete 'sad' from 0 tracks? y/n"
             )
@@ -705,12 +831,8 @@ class TestRemoveOptionFlow:
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy", "sad", "calm"]}, path)
         async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
-            await pilot.press("delete")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
+            await answer(app, pilot, "y")
             assert panel.inline_active is False
             assert app.definitions.options("mood") == ["happy", "calm"]
             assert prompts(panel.selection_list) == ["happy", "calm"]
@@ -723,153 +845,13 @@ class TestRemoveOptionFlow:
         assert read_definitions_file(path).options("mood") == ["happy", "calm"]
 
     @pytest.mark.asyncio
-    async def test_header_says_the_library_is_being_updated(
-        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
-        seen: list[str] = []
-
-        def slow_migration(*args: object, **kwargs: object) -> int:
-            seen.append(header_text(app))
-            return 0
-
-        monkeypatch.setattr("beetsplug.quicktag.app.remove_option", slow_migration)
-        async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
-            await pilot.press("delete")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
-            assert seen == ["Updating library…"]
-            assert header_text(app) == (
-                f"Tagging: {app.item.artist} - {app.item.title}"
-            )
-
-    @pytest.mark.asyncio
-    async def test_definitions_failure_after_the_migration_says_so(
-        self,
-        temp_beets_library: Library,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The library is already updated; the user must hear about the drift."""
-        first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        path = tmp_path / "quicktag_categories.yaml"
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
-
-        def explode(*args: object, **kwargs: object) -> None:
-            raise RuntimeError("model on fire")
-
-        monkeypatch.setattr(CategoryDefinitions, "remove_option", explode)
-        async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
-            await pilot.press("delete")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
-            assert "Library updated but categories not" in header_text(app)
-            assert "model on fire" in header_text(app)
-            assert app.definitions.options("mood") == ["happy", "sad"]
-            assert app.is_running
-        assert not path.exists()
-        assert "mood" not in temp_beets_library.get_item(first.id)
-
-    @pytest.mark.asyncio
-    async def test_unwritable_definitions_warning_survives_the_reload(
-        self, temp_beets_library: Library, tmp_path: Path
-    ) -> None:
-        """The reload after a successful migration must not clobber the
-        warning that the categories file itself could not be written."""
-        first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        path = tmp_path / "missing" / "quicktag_categories.yaml"
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
-        async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
-            await pilot.press("delete")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
-            assert "Could not write categories file" in header_text(app)
-            assert app.is_running
-        assert not path.exists()
-        assert "mood" not in temp_beets_library.get_item(first.id)
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("key", ["n", "escape"])
-    async def test_n_or_escape_cancels(
-        self, temp_beets_library: Library, key: str
-    ) -> None:
-        first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
-        async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
-            await pilot.press("delete")
-            await pilot.pause()
-            await pilot.press(key)
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.inline_active is False
-            assert app.definitions.options("mood") == ["happy", "sad"]
-            assert panel.selection_list.selected == ["sad"]
-            assert app.is_running
-        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
-
-    @pytest.mark.asyncio
-    async def test_changing_track_cancels_the_confirm(
-        self, temp_beets_library: Library
-    ) -> None:
-        """Left/Right reach the app while the prompt has focus."""
-        first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
-        async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
-            await pilot.press("delete")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.confirm_active is True
-            await pilot.press("right")
-            await pilot.pause()
-            assert app.current_item_index == 1
-            assert panel.confirm_active is False
-            assert app._pending_confirm is None
-            assert app.focused is panel.selection_list
-            await pilot.press("y")
-            await pilot.pause()
-            assert app.definitions.options("mood") == ["happy", "sad"]
-        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
-
-    @pytest.mark.asyncio
-    async def test_pending_selection_is_saved_before_counting(
-        self, temp_beets_library: Library
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
-        async with app.run_test() as pilot:
-            lst = app.query_one("#selection-mood", CustomSelectionList)
-            lst.select("sad")
-            lst.highlighted = 1
-            await pilot.press("delete")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.confirm_prompt.render().plain == (
-                "Delete 'sad' from 1 tracks? y/n"
-            )
-
-    @pytest.mark.asyncio
     async def test_deleting_the_last_option_leaves_an_empty_list(
         self, temp_beets_library: Library
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["only"]})
         async with app.run_test() as pilot:
-            app.query_one("#selection-mood", CustomSelectionList).highlighted = 0
-            await pilot.press("delete")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION)
+            await answer(app, pilot, "y")
             assert app.definitions.options("mood") == []
             assert panel.selection_list.option_count == 0
             assert panel.selection_list.highlighted is None
@@ -883,30 +865,12 @@ class TestRenameCategoryFlow:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
         async with app.run_test() as pilot:
-            app.query_one("#selection-vibe", CustomSelectionList).focus()
-            await pilot.press("ctrl+r")
-            await pilot.pause()
-            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            vibe = await start_edit(app, pilot, EditKind.RENAME_CATEGORY, "vibe")
             assert vibe.input_active is True
             assert vibe.input.value == "vibe"
             assert vibe.edit_kind is EditKind.RENAME_CATEGORY
             assert app.focused is vibe.input
             assert "category" in vibe.input.placeholder
-
-    @pytest.mark.asyncio
-    async def test_unchanged_name_just_closes(
-        self, temp_beets_library: Library
-    ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy"]})
-        async with app.run_test() as pilot:
-            await pilot.press("ctrl+r")
-            await pilot.pause()
-            await pilot.press("enter")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.inline_active is False
-            assert app.definitions.categories == ["mood"]
-            assert app.focused is panel.selection_list
 
     @pytest.mark.asyncio
     async def test_rename_without_tracks_replaces_the_panel_in_place(
@@ -915,14 +879,14 @@ class TestRenameCategoryFlow:
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]}, path)
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+r", "ctrl+u", "f", "e", "e", "l", "enter")
-            await pilot.pause()
+            await start_edit(app, pilot, EditKind.RENAME_CATEGORY)
+            await submit(app, pilot, *"feel")
             assert app.definitions.categories == ["feel", "vibe"]
             assert [p.id for p in app.query(CategoryPanel)] == [
                 "panel-feel",
                 "panel-vibe",
             ]
-            feel = app.query_one("#panel-feel", CategoryPanel)
+            feel = panel_of(app, "feel")
             assert feel.category == "feel"
             assert feel.selection_list.id == "selection-feel"
             assert str(feel.border_title) == "feel"
@@ -943,15 +907,13 @@ class TestRenameCategoryFlow:
         set_field(temp_beets_library, second.id, "mood", "happy")
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+r", "ctrl+u", "f", "e", "e", "l", "enter")
-            await pilot.pause()
-            mood = app.query_one("#panel-mood", CategoryPanel)
+            mood = await start_edit(app, pilot, EditKind.RENAME_CATEGORY)
+            await submit(app, pilot, *"feel")
             assert mood.confirm_prompt.render().plain == (
                 "Rename category 'mood' to 'feel' on 2 tracks? y/n"
             )
-            await pilot.press("y")
-            await pilot.pause()
-            feel = app.query_one("#panel-feel", CategoryPanel)
+            await answer(app, pilot, "y")
+            feel = panel_of(app, "feel")
             assert feel.selection_list.selected == ["happy"]
             assert app.item.get("feel") == "happy"
             assert "mood" not in app.item
@@ -965,32 +927,27 @@ class TestRenameCategoryFlow:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+r", "ctrl+u", "M", "o", "o", "d", "enter")
-            await pilot.pause()
+            await start_edit(app, pilot, EditKind.RENAME_CATEGORY)
+            await submit(app, pilot, *"Mood")
             assert app.definitions.categories == ["Mood"]
-            assert app.query_one("#panel-Mood", CategoryPanel).category == "Mood"
+            assert panel_of(app, "Mood").category == "Mood"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("typed", "message_part"),
-        [
-            (["ctrl+u", "a", "l", "b", "u", "m", "enter"], "built-in beets field"),
-            (["ctrl+u", "v", "i", "b", "e", "enter"], "already exists"),
-            (["ctrl+u", "1", "x", "enter"], "letters, digits"),
-        ],
-    )
-    async def test_invalid_name_shows_error_and_stays_open(
-        self, temp_beets_library: Library, typed: list[str], message_part: str
+    async def test_built_in_text_field_cannot_be_renamed(
+        self, temp_beets_library: Library
     ) -> None:
-        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        """Moving every album title into a flex attr and blanking the field
+        is not a rename anyone wants from one keystroke."""
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "composer", "Bach")
+        app = make_app(temp_beets_library, {"composer": ["Bach"]})
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+r", *typed)
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.input_active is True
-            assert message_part in panel.input.placeholder
-            assert app.focused is panel.input
-            assert app.definitions.categories == ["mood", "vibe"]
+            panel = await start_edit(app, pilot, EditKind.RENAME_CATEGORY, "composer")
+            assert panel.inline_active is False
+            assert "built-in beets field" in header_text(app)
+            assert app.focused is panel.selection_list
+            assert app.definitions.categories == ["composer"]
+        assert temp_beets_library.get_item(first.id).get("composer") == "Bach"
 
     @needs_list_field
     @pytest.mark.asyncio
@@ -1001,17 +958,15 @@ class TestRenameCategoryFlow:
         set_field(temp_beets_library, first.id, "genre", "House, Techno")
         app = make_app(temp_beets_library, {"genre": ["House", "Techno"]})
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+r", "end", "s", "enter")
-            await pilot.pause()
+            genre = await start_edit(app, pilot, EditKind.RENAME_CATEGORY, "genre")
+            await pilot.press("end", "s", "enter")
+            await settle(app, pilot)
             assert "Rename category 'genre' to 'genres' on 1 tracks" in (
-                app.query_one("#panel-genre", CategoryPanel)
-                .confirm_prompt.render()
-                .plain
+                genre.confirm_prompt.render().plain
             )
-            await pilot.press("y")
-            await pilot.pause()
+            await answer(app, pilot, "y")
             assert app.definitions.categories == [LIST_FIELD]
-            genres = app.query_one(f"#panel-{LIST_FIELD}", CategoryPanel)
+            genres = panel_of(app, LIST_FIELD)
             assert sorted(genres.selection_list.selected) == ["House", "Techno"]
         item = temp_beets_library.get_item(first.id)
         assert item[LIST_FIELD] == ["House", "Techno"]
@@ -1027,9 +982,7 @@ class TestRemoveCategoryFlow:
         set_field(temp_beets_library, first.id, "mood", "happy")
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+d")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel = await start_edit(app, pilot, EditKind.REMOVE_CATEGORY)
             assert panel.confirm_prompt.render().plain == (
                 "Delete category 'mood' and its values from 1 tracks? y/n"
             )
@@ -1048,10 +1001,8 @@ class TestRemoveCategoryFlow:
             path,
         )
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+d")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
+            await start_edit(app, pilot, EditKind.REMOVE_CATEGORY)
+            await answer(app, pilot, "y")
             assert app.definitions.categories == ["vibe", "zest"]
             assert [p.id for p in app.query(CategoryPanel)] == [
                 "panel-vibe",
@@ -1068,11 +1019,8 @@ class TestRemoveCategoryFlow:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
         async with app.run_test() as pilot:
-            app.query_one("#selection-vibe", CustomSelectionList).focus()
-            await pilot.press("ctrl+d")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
+            await start_edit(app, pilot, EditKind.REMOVE_CATEGORY, "vibe")
+            await answer(app, pilot, "y")
             assert app.definitions.categories == ["mood"]
             assert app.focused is app.query_one("#selection-mood")
 
@@ -1082,10 +1030,8 @@ class TestRemoveCategoryFlow:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+d")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
+            await start_edit(app, pilot, EditKind.REMOVE_CATEGORY)
+            await answer(app, pilot, "y")
             assert app.definitions.categories == []
             assert list(app.query(CategoryPanel)) == []
             assert app.focused is app.query_one(
@@ -1093,42 +1039,29 @@ class TestRemoveCategoryFlow:
             ).query_one(Input)
 
     @pytest.mark.asyncio
-    async def test_n_cancels(self, temp_beets_library: Library) -> None:
-        first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "happy")
-        app = make_app(temp_beets_library, {"mood": ["happy"]})
-        async with app.run_test() as pilot:
-            await pilot.press("ctrl+d")
-            await pilot.pause()
-            await pilot.press("n")
-            await pilot.pause()
-            panel = app.query_one("#panel-mood", CategoryPanel)
-            assert panel.inline_active is False
-            assert app.definitions.categories == ["mood"]
-            assert app.focused is panel.selection_list
-        assert temp_beets_library.get_item(first.id).get("mood") == "happy"
-
-    @pytest.mark.asyncio
-    async def test_migration_failure_keeps_the_panel(
-        self,
-        temp_beets_library: Library,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+    async def test_built_in_text_field_is_only_unlisted(
+        self, temp_beets_library: Library, tmp_path: Path
     ) -> None:
+        """The field holds data quicktag did not put there; one keystroke
+        plus ``y`` must not blank it across the library."""
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "composer", "Bach")
         path = tmp_path / "quicktag_categories.yaml"
-        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
-
-        def explode(*args: object, **kwargs: object) -> int:
-            raise RuntimeError("disk on fire")
-
-        monkeypatch.setattr("beetsplug.quicktag.app.remove_category", explode)
+        app = make_app(
+            temp_beets_library, {"composer": ["Bach"], "mood": ["happy"]}, path
+        )
         async with app.run_test() as pilot:
-            await pilot.press("ctrl+d")
-            await pilot.pause()
-            await pilot.press("y")
-            await pilot.pause()
-            assert "Library update failed" in header_text(app)
+            panel = await start_edit(app, pilot, EditKind.REMOVE_CATEGORY, "composer")
+            assert panel.confirm_prompt.render().plain == (
+                "Remove category 'composer'? It is a built-in beets field, so "
+                "every track keeps its value. y/n"
+            )
+            await answer(app, pilot, "y")
             assert app.definitions.categories == ["mood"]
             assert [p.id for p in app.query(CategoryPanel)] == ["panel-mood"]
+            assert app.item.get("composer") == "Bach"
             assert app.focused is app.query_one("#selection-mood")
-        assert not path.exists()
+            await pilot.press("right")
+            await pilot.pause()
+        assert temp_beets_library.get_item(first.id).get("composer") == "Bach"
+        assert read_definitions_file(path).categories == ["mood"]

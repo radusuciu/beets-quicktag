@@ -41,11 +41,23 @@ class CustomSelectionList(SelectionList):
         Binding("left", "app.previous_item", "Previous"),
         Binding("right", "app.next_item", "Next"),
         # None of these is alphanumeric, so ``on_key`` below lets them through.
-        Binding("plus", "request_edit('add_option')", "Add option"),
-        Binding("f2", "request_edit('rename_option')", "Rename option"),
-        Binding("delete", "request_edit('remove_option')", "Delete option"),
-        Binding("ctrl+r", "request_edit('rename_category')", "Rename category"),
-        Binding("ctrl+d", "request_edit('remove_category')", "Delete category"),
+        Binding("plus", f"request_edit('{EditKind.ADD_OPTION.value}')", "Add option"),
+        Binding(
+            "f2", f"request_edit('{EditKind.RENAME_OPTION.value}')", "Rename option"
+        ),
+        Binding(
+            "delete", f"request_edit('{EditKind.REMOVE_OPTION.value}')", "Delete option"
+        ),
+        Binding(
+            "ctrl+r",
+            f"request_edit('{EditKind.RENAME_CATEGORY.value}')",
+            "Rename category",
+        ),
+        Binding(
+            "ctrl+d",
+            f"request_edit('{EditKind.REMOVE_CATEGORY.value}')",
+            "Delete category",
+        ),
     ]
 
     def action_request_edit(self, kind_name: str) -> None:
