@@ -1,4 +1,4 @@
-"""The YAML definitions file: read, atomic write, seeding rules (§3.2)."""
+"""The YAML definitions file: read, atomic write, seeding rules."""
 
 from pathlib import Path
 
@@ -54,6 +54,22 @@ class TestReadWrite:
         write_definitions_file(path, CategoryDefinitions.from_config({"m": ["b"]}))
         assert path.stat().st_mode & 0o777 == mode_before
 
+    def test_write_follows_a_symlink(self, tmp_path: Path) -> None:
+        """A dotfiles-managed file is a link; the target must be updated and
+        the link kept, or the next sync discards every edit."""
+        target = tmp_path / "dotfiles" / "quicktag_categories.yaml"
+        target.parent.mkdir()
+        target.write_text("m: [a]\n", encoding="utf-8")
+        link = tmp_path / "quicktag_categories.yaml"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks are not available here")
+        write_definitions_file(link, CategoryDefinitions.from_config({"m": ["b"]}))
+        assert link.is_symlink()
+        assert read_definitions_file(target).options("m") == ["b"]
+        assert [p.name for p in target.parent.iterdir()] == ["quicktag_categories.yaml"]
+
     def test_write_failure_raises_oserror(self, tmp_path: Path) -> None:
         missing_dir = tmp_path / "nope" / "quicktag_categories.yaml"
         with pytest.raises(OSError):
@@ -73,6 +89,12 @@ class TestReadWrite:
             read_definitions_file(path)
         assert excinfo.value.path == path
         assert "quicktag_categories.yaml" in str(excinfo.value)
+
+    def test_non_utf8_file_raises_with_path(self, tmp_path: Path) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        path.write_bytes(b"mood: [caf\xe9]\n")
+        with pytest.raises(DefinitionsFileError, match="quicktag_categories.yaml"):
+            read_definitions_file(path)
 
     def test_non_mapping_file_raises(self, tmp_path: Path) -> None:
         path = tmp_path / "quicktag_categories.yaml"

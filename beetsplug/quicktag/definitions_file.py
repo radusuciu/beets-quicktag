@@ -32,7 +32,7 @@ def read_definitions_file(path: Path) -> CategoryDefinitions:
     """Parse ``path``. An empty file means "no categories"."""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
         raise DefinitionsFileError(path, str(error)) from error
     try:
         data = yaml.safe_load(text)
@@ -51,7 +51,13 @@ def read_definitions_file(path: Path) -> CategoryDefinitions:
 
 
 def write_definitions_file(path: Path, definitions: CategoryDefinitions) -> None:
-    """Atomically replace ``path`` with ``definitions``."""
+    """Atomically replace ``path`` with ``definitions``.
+
+    A symlink is followed: the temp file is created next to the target and
+    renamed over the target, so a link (say, into a dotfiles checkout) keeps
+    pointing at a file that now holds the new content.
+    """
+    path = path.resolve()
     text = yaml.safe_dump(
         definitions.to_mapping(),
         sort_keys=False,
