@@ -78,7 +78,7 @@ ignore = [
 "tests/*" = ["S101"]  # allow assert in tests
 
 [tool.ruff.lint.isort]
-known-first-party = ["beetsplug"]
+known-first-party = ["beetsplug", "conftest"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

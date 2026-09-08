@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Library
-from textual.widgets import Footer, Input, Static
+from textual.widgets import Footer, Input
 from textual.widgets._footer import FooterKey
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
@@ -24,11 +24,7 @@ from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackStateChanged
-
-
-def header_text(app: QuickTagApp) -> str:
-    """Return the text the header Static actually renders."""
-    return app.query_one("#header_text_content", Static).render().plain
+from conftest import header_text
 
 
 class TestQuickTagAppPlaybackConfiguration:

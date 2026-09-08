@@ -3,19 +3,13 @@
 import pytest
 from beets.library import Album, Item, Library
 
-from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.item_values import (
     encode_values,
     read_item_values,
     split_value,
     write_item_values,
 )
-
-LIST_FIELD = "genres"
-needs_list_field = pytest.mark.skipif(
-    not CategoryDefinitions.is_list_field(LIST_FIELD),
-    reason="installed beets has no list-valued 'genres' field",
-)
+from conftest import LIST_FIELD, needs_list_field
 
 
 class TestSplitValue:

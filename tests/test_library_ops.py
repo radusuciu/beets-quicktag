@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 from beets.library import Item, Library
 
-from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.library_ops import (
     count_tracks,
     remove_category,
@@ -15,12 +14,7 @@ from beetsplug.quicktag.library_ops import (
     rename_category,
     rename_option,
 )
-
-LIST_FIELD = "genres"
-needs_list_field = pytest.mark.skipif(
-    not CategoryDefinitions.is_list_field(LIST_FIELD),
-    reason="installed beets has no list-valued 'genres' field",
-)
+from conftest import LIST_FIELD, needs_list_field
 
 
 @pytest.fixture
