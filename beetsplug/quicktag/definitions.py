@@ -21,6 +21,12 @@ NAME_PATTERN = re.compile(r"^[A-Za-z_-][A-Za-z0-9_-]*$")
 # The plugin uses ``comments`` for the free-text comments field.
 RESERVED_NAMES = frozenset({"comments"})
 
+# The only fixed list-valued field that works as a category. The other
+# ``DelimitedString`` fields (``artists``, ``albumtypes``, the MusicBrainz id
+# lists, ...) are kept in step with companion fields such as ``artists_ids``
+# by the importer, so editing one of them alone would misalign the pair.
+SUPPORTED_LIST_FIELDS = frozenset({"genres"})
+
 
 class CategoryDefinitions:
     """Ordered mapping of category name -> ordered list of option values."""
@@ -68,6 +74,9 @@ class CategoryDefinitions:
                     "a digit."
                 )
             name = defs._validate_new_name(raw_name, current=None, loaded=True)
+            if raw_options is None:
+                # A bare ``name:`` line; the writer spells it ``name: []``.
+                raw_options = []
             if isinstance(raw_options, str):
                 raise ValueError(
                     f"Category '{name}' options must be a list of strings, "
@@ -119,6 +128,32 @@ class CategoryDefinitions:
         field_type = Item._fields.get(name)
         return isinstance(field_type, String) and field_type.model_type is str
 
+    @staticmethod
+    def is_computed_field(name: str) -> bool:
+        """True when ``name`` is derived on read (``filesize``, ``singleton``,
+        plugin template fields) and so cannot be written or deleted."""
+        return name in Item._getters()
+
+    @staticmethod
+    def list_field_delimiters(name: str) -> tuple[str, ...]:
+        """The strings beets splits a stored ``name`` list value on.
+
+        Empty for anything but a fixed list-valued field. A single stored
+        value containing one of these comes back as several values.
+        """
+        field_type = Item._fields.get(name)
+        if field_type is None or field_type.model_type is not list:
+            return ()
+        candidates = (
+            getattr(field_type, "db_delimiter", None),
+            getattr(field_type, "fmt_delimiter", None),
+        )
+        return tuple(
+            delimiter
+            for delimiter in candidates
+            if isinstance(delimiter, str) and delimiter
+        )
+
     # ---- category mutations -----------------------------------------------
 
     def add_category(self, name: str) -> str:
@@ -157,7 +192,7 @@ class CategoryDefinitions:
         """
         options = self._require_category(category)
         index = self._require_option(category, options, old)
-        new = self._validate_option_shape(new)
+        new = self._validate_option_shape(category, new)
         target = self._find_case_insensitive(options, new)
         if target is not None and target != index:
             del options[index]
@@ -201,7 +236,7 @@ class CategoryDefinitions:
         ``current`` is the category being renamed, so a case-only rename of
         itself is not a duplicate. ``loaded`` relaxes the fixed-field rule for
         names coming from the config or the definitions file (see
-        ``from_config`` in the next task).
+        :meth:`from_config`).
         """
         name = name.strip()
         if not NAME_PATTERN.fullmatch(name):
@@ -214,7 +249,11 @@ class CategoryDefinitions:
         existing = [key for key in self._categories if key != current]
         if self._find_case_insensitive(existing, name) is not None:
             raise ValueError(f"A category named '{name}' already exists.")
-        if self.is_fixed_field(name) and not self.is_list_field(name):
+        if self.is_computed_field(name):
+            raise ValueError(
+                f"'{name}' is a computed beets field; choose another name."
+            )
+        if self.is_fixed_field(name) and name not in SUPPORTED_LIST_FIELDS:
             if not loaded:
                 raise ValueError(
                     f"'{name}' is a built-in beets field; choose another name."
@@ -227,17 +266,23 @@ class CategoryDefinitions:
                 )
         return name
 
-    @staticmethod
-    def _validate_option_shape(value: str) -> str:
+    @classmethod
+    def _validate_option_shape(cls, category: str, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("An option cannot be empty.")
         if "," in value:
             raise ValueError("An option cannot contain a comma.")
+        for delimiter in cls.list_field_delimiters(category):
+            if delimiter in value:
+                raise ValueError(
+                    f"An option of '{category}' cannot contain '{delimiter}': "
+                    f"beets splits '{category}' values on it."
+                )
         return value
 
     def _validate_option(self, category: str, value: str, options: list[str]) -> str:
-        value = self._validate_option_shape(value)
+        value = self._validate_option_shape(category, value)
         existing_index = self._find_case_insensitive(options, value)
         if existing_index is not None:
             existing_value = options[existing_index]

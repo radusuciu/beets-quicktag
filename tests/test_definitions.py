@@ -1,8 +1,16 @@
 """Unit tests for the CategoryDefinitions model. No Textual, no beets library."""
 
 import pytest
+from beets.library import Item
 
 from beetsplug.quicktag.definitions import CategoryDefinitions
+
+# Fixed list-valued fields other than ``genres`` in the installed beets.
+OTHER_LIST_FIELDS = sorted(
+    name
+    for name in Item._fields
+    if CategoryDefinitions.is_list_field(name) and name != "genres"
+)
 
 
 class TestStructure:
@@ -64,7 +72,7 @@ class TestCategoryNameRules:
 
     @pytest.mark.parametrize("name", ["year", "bpm", "album", "title", "path"])
     def test_interactive_add_refuses_any_fixed_field(self, name: str) -> None:
-        """Typing a built-in field name in the TUI is refused (§3.1)."""
+        """Typing a built-in field name in the TUI is refused."""
         defs = CategoryDefinitions()
         with pytest.raises(ValueError, match="built-in beets field"):
             defs.add_category(name)
@@ -75,6 +83,20 @@ class TestCategoryNameRules:
         if not CategoryDefinitions.is_list_field("genres"):
             pytest.skip("installed beets has no list-valued 'genres' field")
         assert defs.add_category("genres") == "genres"
+
+    @pytest.mark.parametrize("name", OTHER_LIST_FIELDS)
+    def test_interactive_add_refuses_other_list_valued_fields(self, name: str) -> None:
+        """Only `genres` stands alone; the others are paired with companion
+        fields (ids, sort names) that beets keeps in step."""
+        defs = CategoryDefinitions()
+        with pytest.raises(ValueError, match="built-in beets field"):
+            defs.add_category(name)
+
+    @pytest.mark.parametrize("name", ["filesize", "singleton"])
+    def test_interactive_add_refuses_computed_field(self, name: str) -> None:
+        defs = CategoryDefinitions()
+        with pytest.raises(ValueError, match="computed"):
+            defs.add_category(name)
 
 
 class TestOptionRules:
@@ -103,6 +125,17 @@ class TestOptionRules:
     ) -> None:
         with pytest.raises(ValueError, match="already has 'happy'"):
             defs.add_option("mood", "HAPPY")
+
+    def test_rejects_list_field_delimiter(self) -> None:
+        """A lone ``Drum; Bass`` comes back from the database as two values."""
+        if not CategoryDefinitions.is_list_field("genres"):
+            pytest.skip("installed beets has no list-valued 'genres' field")
+        defs = CategoryDefinitions()
+        defs.add_category("genres")
+        with pytest.raises(ValueError, match="cannot contain '; '"):
+            defs.add_option("genres", "Drum; Bass")
+        defs.add_category("mood")
+        assert defs.add_option("mood", "Drum; Bass") == "Drum; Bass"
 
     def test_rejects_unknown_category(self, defs: CategoryDefinitions) -> None:
         with pytest.raises(ValueError, match="No category named 'nope'"):
@@ -263,6 +296,28 @@ class TestFromConfig:
             pytest.skip("installed beets has no list-valued 'genres' field")
         defs = CategoryDefinitions.from_config({"genres": ["House"]})
         assert defs.fixed_field_warnings() == []
+
+    @pytest.mark.parametrize("name", OTHER_LIST_FIELDS)
+    def test_rejects_other_list_fixed_fields(self, name: str) -> None:
+        with pytest.raises(ValueError, match=f"'{name}'"):
+            CategoryDefinitions.from_config({name: ["a"]})
+
+    @pytest.mark.parametrize("name", ["filesize", "singleton"])
+    def test_rejects_computed_field(self, name: str) -> None:
+        with pytest.raises(ValueError, match="computed"):
+            CategoryDefinitions.from_config({name: ["a"]})
+
+    def test_rejects_list_field_delimiter_in_option(self) -> None:
+        if not CategoryDefinitions.is_list_field("genres"):
+            pytest.skip("installed beets has no list-valued 'genres' field")
+        with pytest.raises(ValueError, match="cannot contain '; '"):
+            CategoryDefinitions.from_config({"genres": ["Drum; Bass"]})
+
+    def test_bare_key_means_no_options(self) -> None:
+        """``energy:`` with nothing after it loads as ``None``, and the app
+        itself writes ``energy: []`` for the same state."""
+        defs = CategoryDefinitions.from_config({"energy": None})
+        assert defs.options("energy") == []
 
     def test_no_warning_for_flexible_attributes(self) -> None:
         defs = CategoryDefinitions.from_config({"mood": ["a"], "genre": ["b"]})
