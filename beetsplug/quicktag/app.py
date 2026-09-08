@@ -1,6 +1,7 @@
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from functools import partial
 from pathlib import Path
 
 from beets.dbcore.db import Results as BeetsResults
@@ -15,7 +16,8 @@ from textual.widgets import Footer, Input, Static
 from .definitions import CategoryDefinitions
 from .definitions_file import write_definitions_file
 from .item_values import read_item_values, write_item_values
-from .widgets.category_panel import CategoryPanel
+from .library_ops import count_tracks, rename_option
+from .widgets.category_panel import RENAME_OPTION_PLACEHOLDER, CategoryPanel
 from .widgets.custom_selection_list import CustomSelectionList, EditKind
 from .widgets.inline_input import InlineInput
 from .widgets.input_with_label import InputWithLabel
@@ -275,12 +277,29 @@ class QuickTagApp(App):
             return False
         return True
 
+    async def on_category_panel_edit_requested(
+        self, message: CategoryPanel.EditRequested
+    ) -> None:
+        """An editing key on a panel's list (everything except add)."""
+        panel, kind, value = message.panel, message.kind, message.value
+        if kind is EditKind.RENAME_OPTION and value is not None:
+            panel.open_input(
+                kind,
+                target=value,
+                initial=value,
+                placeholder=RENAME_OPTION_PLACEHOLDER,
+            )
+
     async def on_category_panel_inline_submitted(
         self, message: CategoryPanel.InlineSubmitted
     ) -> None:
         """Enter in a panel's inline input, dispatched on what it was opened for."""
         if message.kind is EditKind.ADD_OPTION:
             self._add_option(message.panel, message.value)
+        elif message.kind is EditKind.RENAME_OPTION and message.target is not None:
+            await self._submit_option_rename(
+                message.panel, message.target, message.value
+            )
 
     def _add_option(self, panel: CategoryPanel, typed: str) -> None:
         """Validate, persist, show and select a new option.
@@ -296,6 +315,70 @@ class QuickTagApp(App):
         self._persist_definitions()
         panel.add_option(value, select=True)
         panel.close_input()
+
+    async def _submit_option_rename(
+        self, panel: CategoryPanel, old: str, typed: str
+    ) -> None:
+        """Validate, then apply directly or ask first when tracks are affected."""
+        category = panel.category
+        try:
+            new = self.definitions.check_option_rename(category, old, typed)
+        except ValueError as error:
+            panel.show_error(str(error))
+            return
+        if new == old:
+            panel.close_input()
+            return
+        target = self.definitions.merge_target(category, old, new)
+        # Pending selections on the current track must take part in the count.
+        await self._save_current_item_tags()
+        count = count_tracks(self.lib, category, old)
+        run = partial(self._rename_option, panel, old, target or new)
+        if target is not None:
+            self._ask(
+                panel, f"Merge '{old}' into '{target}' on {count} tracks? y/n", run
+            )
+        elif count:
+            self._ask(panel, f"Rename '{old}' to '{new}' on {count} tracks? y/n", run)
+        else:
+            panel.close_input()
+            await run()
+
+    async def _rename_option(self, panel: CategoryPanel, old: str, new: str) -> None:
+        """Migrate, then update the model, the file, the list and the track."""
+        category = panel.category
+        highlighted = panel.selection_list.highlighted
+        applied = await self._apply_edit(
+            migrate=lambda: rename_option(self.lib, category, old, new),
+            update_model=lambda: self.definitions.rename_option(category, old, new),
+        )
+        if not applied:
+            return
+        panel.set_options(self.definitions.options(category), highlighted=highlighted)
+        await self._reload_after_migration()
+
+    async def _apply_edit(
+        self, *, migrate: Callable[[], int], update_model: Callable[[], None]
+    ) -> bool:
+        """Library first, then model and file.
+
+        Returns ``False`` when the library update failed, in which case
+        nothing else has changed.
+        """
+        try:
+            changed = migrate()
+        except Exception as error:
+            # The transaction was rolled back; any error class is a "nothing
+            # happened" for the user, so it is caught broadly on purpose.
+            self.log.error(f"Library migration failed: {error}")
+            self.header_widget.show_message(
+                f"Library update failed, nothing changed: {error}"
+            )
+            return False
+        self.log.info(f"Library migration changed {changed} tracks.")
+        update_model()
+        self._persist_definitions()
+        return True
 
     def _ask(
         self,
