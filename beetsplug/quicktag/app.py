@@ -97,6 +97,15 @@ class HeaderWidget(Vertical):
 
         self._header_text_display.update(header_text_value)
 
+    def set_item(self, item: BeetsItem | None) -> None:
+        """Store ``item`` without touching the displayed text.
+
+        Used after a migration reload: the item backing the title has
+        changed, but the display may be showing a message that must not be
+        overwritten by a fresh render of the (possibly stale) title.
+        """
+        self.item = item
+
     def show_message(self, text: str) -> None:
         """Replace the title line with ``text`` until ``update_header`` runs."""
         self._header_text_display.update(text)
@@ -482,6 +491,11 @@ class QuickTagApp(App):
             )
             return False
         self.log.info(f"Library migration changed {changed} tracks.")
+        # Restore the title before the model/file pass so a later warning
+        # from ``_persist_definitions`` is the last thing written; the
+        # reload that follows a successful edit only refreshes the item
+        # reference, not the displayed text, so it cannot clobber it.
+        self.header_widget.update_header(self.item)
         try:
             update_model()
             self._persist_definitions()
@@ -1052,9 +1066,10 @@ class QuickTagApp(App):
             self.current_item_index = min(self.current_item_index, len(fresh) - 1)
         self.items = fresh
         self.item = fresh[self.current_item_index]
-        # The header is holding the pre-migration Item, and may be showing a
-        # progress message in place of the title.
-        self.header_widget.update_header(self.item)
+        # Only refresh the stored reference, not the displayed text: the
+        # header may be showing a warning from ``_persist_definitions`` (or
+        # another message) that must survive the reload.
+        self.header_widget.set_item(self.item)
         await self._load_tags_for_current_item()
 
     def _adopt_option(self, category_name: str, value: str) -> bool:

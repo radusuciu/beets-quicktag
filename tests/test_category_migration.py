@@ -407,7 +407,9 @@ class TestReloadAfterMigration:
             await app._reload_after_migration()
             assert app.header_widget.item is app.item
             assert app.header_widget.item is not stale
-            assert header_text(app) == f"Tagging: {app.item.artist} - {app.item.title}"
+            # The reload only refreshes the stored reference: it must not
+            # re-render the title over a message still on screen.
+            assert header_text(app) == "Updating library…"
 
     @pytest.mark.asyncio
     async def test_show_message_replaces_the_header_line(
@@ -769,6 +771,27 @@ class TestRemoveOptionFlow:
             assert "Library updated but categories not" in header_text(app)
             assert "model on fire" in header_text(app)
             assert app.definitions.options("mood") == ["happy", "sad"]
+            assert app.is_running
+        assert not path.exists()
+        assert "mood" not in temp_beets_library.get_item(first.id)
+
+    @pytest.mark.asyncio
+    async def test_unwritable_definitions_warning_survives_the_reload(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        """The reload after a successful migration must not clobber the
+        warning that the categories file itself could not be written."""
+        first = tracks(temp_beets_library)[0]
+        set_field(temp_beets_library, first.id, "mood", "sad")
+        path = tmp_path / "missing" / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).highlighted = 1
+            await pilot.press("delete")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert "Could not write categories file" in header_text(app)
             assert app.is_running
         assert not path.exists()
         assert "mood" not in temp_beets_library.get_item(first.id)
