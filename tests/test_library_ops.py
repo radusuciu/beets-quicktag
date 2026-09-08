@@ -219,6 +219,30 @@ class TestRenameCategory:
         assert lib.get_item(a)[LIST_FIELD] == ["House", "Techno"]
         assert not lib.get_item(a).get("genre")
 
+    def test_failure_rolls_back_every_track(
+        self, lib: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """This migration stores in a loop of its own, not through ``_rewrite``."""
+        a = add_track(lib, mood="Hiphop")
+        b = add_track(lib, mood="House")
+        original_store = Item.store
+        stores: list[int] = []
+
+        def flaky_store(self: Item, *args: object, **kwargs: object) -> None:
+            stores.append(self.id)
+            if len(stores) == 2:
+                raise RuntimeError("disk on fire")
+            original_store(self, *args, **kwargs)
+
+        monkeypatch.setattr(Item, "store", flaky_store)
+        with pytest.raises(RuntimeError, match="disk on fire"):
+            rename_category(lib, "mood", "vibe")
+        monkeypatch.undo()
+        assert value_of(lib, a, "mood") == "Hiphop"
+        assert value_of(lib, b, "mood") == "House"
+        assert value_of(lib, a, "vibe") is None
+        assert value_of(lib, b, "vibe") is None
+
     def test_same_name_is_a_no_op(self, lib: Library) -> None:
         a = add_track(lib, mood="a, b")
         assert rename_category(lib, "mood", "mood") == 0
