@@ -217,6 +217,69 @@ class TestAdoptingUnknownValues:
             "Funky",
         ]
 
+    @pytest.mark.asyncio
+    async def test_several_unknown_values_write_the_file_once(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "Jazzy, Funky"
+        item["vibe"] = "afro"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        writes: list[dict[str, list[str]]] = []
+        monkeypatch.setattr(
+            "beetsplug.quicktag.app.write_definitions_file",
+            lambda _path, definitions: writes.append(definitions.to_mapping()),
+        )
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": []}, path)
+        async with app.run_test():
+            pass
+        assert writes == [{"mood": ["happy", "Jazzy", "Funky"], "vibe": ["afro"]}]
+
+    @pytest.mark.asyncio
+    async def test_known_values_do_not_write_the_file(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "happy"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        writes: list[str] = []
+        monkeypatch.setattr(
+            "beetsplug.quicktag.app.write_definitions_file",
+            lambda _path, _definitions: writes.append("write"),
+        )
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test():
+            pass
+        assert writes == []
+
+    @pytest.mark.asyncio
+    async def test_text_field_category_does_not_adopt_values(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        """Browsing must not append every label in the library to the file;
+        the stored value is still preserved on save."""
+        item = next(iter(temp_beets_library.items()))
+        item["label"] = "Other"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"label": ["Warp"]}, path)
+        async with app.run_test():
+            lst = app.query_one("#selection-label", CustomSelectionList)
+            assert lst.option_count == 1
+            assert lst.selected == []
+            assert app.definitions.options("label") == ["Warp"]
+            await app._save_current_item_tags()
+        assert temp_beets_library.get_item(item.id).label == "Other"
+        assert not path.exists()
+
 
 class TestPersistDefinitions:
     @pytest.mark.asyncio
@@ -534,12 +597,51 @@ class TestAddCategoryFlow:
         assert temp_beets_library.get_item(item_id).get("vibe") == "afro"
 
     @pytest.mark.asyncio
+    async def test_new_category_keeps_the_tracks_existing_value(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        """The track already carries the field; the fresh panel must show
+        that value, or the next save would delete it."""
+        item = next(iter(temp_beets_library.items()))
+        item["vibe"] = "afro"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "i", "b", "e", "enter")
+            await pilot.pause()
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert app.definitions.options("vibe") == ["afro"]
+            assert vibe.selection_list.selected == ["afro"]
+            await pilot.press("right")
+        assert temp_beets_library.get_item(item.id).get("vibe") == "afro"
+        assert read_definitions_file(path).options("vibe") == ["afro"]
+
+    @needs_list_field
+    @pytest.mark.asyncio
+    async def test_new_list_field_category_keeps_the_tracks_existing_value(
+        self, temp_beets_library: Library
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item[LIST_FIELD] = ["House"]
+        item.store()
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", *LIST_FIELD, "enter")
+            await pilot.pause()
+            panel = app.query_one(f"#panel-{LIST_FIELD}", CategoryPanel)
+            assert panel.selection_list.selected == ["House"]
+            await pilot.press("right")
+        assert temp_beets_library.get_item(item.id)[LIST_FIELD] == ["House"]
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("typed", "message_part"),
         [
             (["enter"], "letters, digits"),
             (["m", "o", "o", "d", "enter"], "already exists"),
             (["y", "e", "a", "r", "enter"], "built-in beets field"),
+            (list("filesize") + ["enter"], "computed beets field"),
             (["1", "a", "enter"], "letters, digits"),
         ],
     )

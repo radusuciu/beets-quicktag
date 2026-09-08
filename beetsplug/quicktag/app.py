@@ -327,9 +327,13 @@ class QuickTagApp(App):
         except ValueError as error:
             new_category_input.show_error(str(error))
             return
-        self._persist_definitions()
         panel = CategoryPanel(name, [])
         await self.mount(panel, before=new_category_input)
+        # The track may already carry values for this field; show them (and
+        # adopt unknown ones) so the first save keeps them instead of
+        # writing an empty selection over them.
+        self._load_category_values(name)
+        self._persist_definitions()
         new_category_input.close()
         panel.selection_list.focus()
 
@@ -708,34 +712,12 @@ class QuickTagApp(App):
             return
 
         self._unadoptable_values = {}
+        adopted_any = False
         for category_name in self.definitions.categories:
-            try:
-                selection_list = self._selection_list(category_name)
-            except NoMatches:
-                self.log.error(
-                    "Could not find SelectionList for category: "
-                    f"{category_name} during load."
-                )
-                continue
-
-            selection_list.deselect_all()
-            known_options = set(self.definitions.options(category_name))
-            for value in read_item_values(self.item, category_name):
-                if value not in known_options:
-                    # A value differing only by case is the known option, so
-                    # select that one rather than adopting a near-duplicate.
-                    existing = self.definitions.find_option(category_name, value)
-                    if existing is not None:
-                        selection_list.select(existing)
-                        continue
-                    if not self._adopt_option(category_name, value):
-                        self._unadoptable_values.setdefault(category_name, []).append(
-                            value
-                        )
-                        continue
-                    known_options.add(value)
-                selection_list.select(value)
-            selection_list.scroll_to_highlight()
+            adopted_any = self._load_category_values(category_name) or adopted_any
+        if adopted_any:
+            # Once per track, not once per adopted value.
+            self._persist_definitions()
 
         # Load comments using InputWithLabel
         try:
@@ -749,12 +731,56 @@ class QuickTagApp(App):
         except NoMatches:
             self.log.error("Could not find comments input for loading.")
 
+    def _load_category_values(self, category_name: str) -> bool:
+        """Select the current track's values for ``category_name`` in its list.
+
+        A value that is not an option yet is adopted as one, except on a
+        built-in text field such as ``album``, where that would append every
+        distinct value in the library to the file. Values that cannot become
+        options are remembered so a save writes them back untouched.
+
+        Returns ``True`` when the definitions changed; persisting them is
+        the caller's job.
+        """
+        try:
+            selection_list = self._selection_list(category_name)
+        except NoMatches:
+            self.log.error(
+                "Could not find SelectionList for category: "
+                f"{category_name} during load."
+            )
+            return False
+
+        selection_list.deselect_all()
+        self._unadoptable_values.pop(category_name, None)
+        known_options = set(self.definitions.options(category_name))
+        adopt = not CategoryDefinitions.is_text_field(category_name)
+        adopted_any = False
+        for value in read_item_values(self.item, category_name):
+            if value not in known_options:
+                # A value differing only by case is the known option, so
+                # select that one rather than adopting a near-duplicate.
+                existing = self.definitions.find_option(category_name, value)
+                if existing is not None:
+                    selection_list.select(existing)
+                    continue
+                if not adopt or not self._adopt_option(category_name, value):
+                    self._unadoptable_values.setdefault(category_name, []).append(value)
+                    continue
+                known_options.add(value)
+                adopted_any = True
+            selection_list.select(value)
+        selection_list.scroll_to_highlight()
+        return adopted_any
+
     def _adopt_option(self, category_name: str, value: str) -> bool:
         """Add a value found on a track but missing from the definitions.
 
         Keeps the definitions a faithful mirror of the library so the value is
         not silently dropped on the next save. Returns ``False`` when the model
         refuses it (e.g. it differs from an existing option only by case).
+        The definitions file is not written here; see
+        :meth:`_load_tags_for_current_item`.
         """
         try:
             self.definitions.add_option(category_name, value)
@@ -763,7 +789,6 @@ class QuickTagApp(App):
                 f"Not adopting {value!r} into category {category_name}: {error}"
             )
             return False
-        self._persist_definitions()
         try:
             self._panel(category_name).add_option(value, select=False)
         except NoMatches:
