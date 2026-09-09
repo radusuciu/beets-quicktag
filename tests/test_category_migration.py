@@ -27,6 +27,7 @@ from conftest import (
     needs_list_field,
     prompts,
     settle,
+    wait_for_footer_keys,
 )
 
 KEY_FOR = {
@@ -156,14 +157,11 @@ class TestListEditKeys:
     async def test_editing_keys_are_listed_in_the_footer(
         self, temp_beets_library: Library
     ) -> None:
-        from textual.widgets import Footer
-        from textual.widgets._footer import FooterKey
-
+        expected = {"f2", "delete", "ctrl+r", "ctrl+d"}
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            await pilot.pause()
-            keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
-            assert {"f2", "delete", "ctrl+r", "ctrl+d"} <= keys
+            keys = await wait_for_footer_keys(pilot, lambda keys: expected <= keys)
+            assert expected <= keys
 
 
 class TestPanelInline:

@@ -13,7 +13,13 @@ from beetsplug.quicktag.definitions_file import read_definitions_file
 from beetsplug.quicktag.widgets.category_panel import CategoryPanel
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
-from conftest import LIST_FIELD, make_app, needs_list_field, prompts
+from conftest import (
+    LIST_FIELD,
+    make_app,
+    needs_list_field,
+    prompts,
+    wait_for_footer_keys,
+)
 
 
 class TestValueBasedSelections:
@@ -375,13 +381,9 @@ class TestPlusOpensInlineInput:
     async def test_plus_is_listed_in_footer_with_list_focused(
         self, temp_beets_library: Library
     ) -> None:
-        from textual.widgets import Footer
-        from textual.widgets._footer import FooterKey
-
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
-            await pilot.pause()
-            keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+            keys = await wait_for_footer_keys(pilot, lambda keys: "plus" in keys)
             assert "plus" in keys
 
     @pytest.mark.asyncio

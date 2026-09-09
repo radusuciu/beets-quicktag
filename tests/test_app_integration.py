@@ -10,47 +10,20 @@ Covers:
 """
 
 import asyncio
-import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Library
-from textual.pilot import Pilot
-from textual.widgets import Footer, Input
-from textual.widgets._footer import FooterKey
+from textual.widgets import Input
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
 from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackStateChanged
-from conftest import header_text
-
-
-async def wait_for_footer_keys(
-    pilot: Pilot,
-    predicate: Callable[[set[str]], bool],
-    *,
-    timeout: float = 5.0,
-) -> set[str]:
-    """Poll the footer until the set of key names it shows satisfies ``predicate``.
-
-    Textual fills the Footer asynchronously: a focus change publishes
-    ``bindings_updated`` after the next screen refresh, and the Footer then
-    schedules its recompose after the refresh after that, emptying itself before
-    remounting the keys. A single ``pilot.pause()`` does not cover that chain on
-    every platform, so callers poll for the state they expect. Returns the last
-    key set seen, so the caller's assertion reports it on a timeout.
-    """
-    deadline = time.monotonic() + timeout
-    while True:
-        await pilot.pause()
-        keys = {key.key for key in pilot.app.query_one(Footer).query(FooterKey)}
-        if predicate(keys) or time.monotonic() > deadline:
-            return keys
+from conftest import header_text, wait_for_footer_keys
 
 
 class TestQuickTagAppPlaybackConfiguration:
