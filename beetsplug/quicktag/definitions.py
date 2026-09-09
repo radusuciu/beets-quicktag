@@ -158,7 +158,7 @@ class CategoryDefinitions:
         """True when quicktag may rewrite ``name`` across the whole library.
 
         Flexible attributes and the supported list fields hold quicktag's
-        values. A built-in text field (``album``, ``composer``, ...) is only
+        values. A built-in text field (``album``, ``grouping``, ...) is only
         borrowed: it holds data quicktag did not put there, so its category
         can be listed and unlisted but the field is never cleared or moved
         wholesale.

@@ -12,7 +12,8 @@ Provides fixtures for:
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Generator
+import time
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -22,7 +23,8 @@ from beets.library import Item, Library
 from just_playback import Playback
 from mutagen.id3 import ID3, TALB, TIT2, TPE1
 from textual.pilot import Pilot
-from textual.widgets import Static
+from textual.widgets import Footer, Static
+from textual.widgets._footer import FooterKey
 
 from beetsplug.quicktag.app import QuickTagApp
 from beetsplug.quicktag.definitions import CategoryDefinitions
@@ -66,6 +68,29 @@ def make_app(
 def header_text(app: QuickTagApp) -> str:
     """The text the header line actually renders."""
     return app.query_one("#header_text_content", Static).render().plain
+
+
+async def wait_for_footer_keys(
+    pilot: Pilot,
+    predicate: Callable[[set[str]], bool],
+    *,
+    timeout: float = 5.0,
+) -> set[str]:
+    """Poll the footer until the set of key names it shows satisfies ``predicate``.
+
+    Textual fills the Footer asynchronously: a focus change publishes
+    ``bindings_updated`` after the next screen refresh, and the Footer then
+    schedules its recompose after the refresh after that, emptying itself before
+    remounting the keys. A single ``pilot.pause()`` does not cover that chain on
+    every platform, so callers poll for the state they expect. Returns the last
+    key set seen, so the caller's assertion reports it on a timeout.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        await pilot.pause()
+        keys = {key.key for key in pilot.app.query_one(Footer).query(FooterKey)}
+        if predicate(keys) or time.monotonic() > deadline:
+            return keys
 
 
 def prompts(selection_list: CustomSelectionList) -> list[str]:

@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     
     steps:
     - uses: actions/checkout@v4
@@ -52,4 +52,4 @@ jobs:
     
     - name: Test with pytest
       run: |
-        uv run pytest --cov=beetsplug --cov-report=xml --cov-report=term-missing
+        uv run pytest

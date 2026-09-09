@@ -16,15 +16,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Library
-from textual.widgets import Footer, Input
-from textual.widgets._footer import FooterKey
+from textual.widgets import Input
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
 from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackStateChanged
-from conftest import header_text
+from conftest import header_text, wait_for_footer_keys
 
 
 class TestQuickTagAppPlaybackConfiguration:
@@ -997,7 +996,9 @@ class TestQuickTagAppNavigationBindings:
             assert shown.get("left") == "Previous"
             assert shown.get("right") == "Next"
 
-            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+            footer_keys = await wait_for_footer_keys(
+                pilot, lambda keys: {"left", "right"} <= keys
+            )
             assert {"left", "right"} <= footer_keys
 
     @pytest.mark.asyncio
@@ -1025,8 +1026,10 @@ class TestQuickTagAppNavigationBindings:
             app.query_one("#comments-input", InputWithLabel).query_one(Input).focus()
             await pilot.pause()
 
-            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
-            assert not ({"left", "right"} & footer_keys)
+            footer_keys = await wait_for_footer_keys(
+                pilot, lambda keys: bool(keys) and not ({"left", "right"} & keys)
+            )
+            assert footer_keys and not ({"left", "right"} & footer_keys)
 
     @pytest.mark.asyncio
     async def test_footer_hides_playback_keys_with_comments_input_focused(
@@ -1059,8 +1062,11 @@ class TestQuickTagAppNavigationBindings:
             comments.focus()
             await pilot.pause()
 
-            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
-            assert not ({"slash", "less_than_sign", "greater_than_sign"} & footer_keys)
+            playback_keys = {"slash", "less_than_sign", "greater_than_sign"}
+            footer_keys = await wait_for_footer_keys(
+                pilot, lambda keys: bool(keys) and not (playback_keys & keys)
+            )
+            assert footer_keys and not (playback_keys & footer_keys)
 
             with patch.object(app, "action_play_pause_current_item") as play_pause:
                 await pilot.press("slash", "less_than_sign", "greater_than_sign")
@@ -1072,8 +1078,10 @@ class TestQuickTagAppNavigationBindings:
             app.query_one("#selection-genre", CustomSelectionList).focus()
             await pilot.pause()
 
-            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
-            assert {"slash", "less_than_sign", "greater_than_sign"} <= footer_keys
+            footer_keys = await wait_for_footer_keys(
+                pilot, lambda keys: playback_keys <= keys
+            )
+            assert playback_keys <= footer_keys
 
 
 class TestMediaKeyBindings:
@@ -1166,9 +1174,9 @@ class TestMediaKeyBindings:
         app = self._make_app(temp_beets_library)
 
         async with app.run_test() as pilot:
-            await pilot.pause()
-            footer_keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+            footer_keys = await wait_for_footer_keys(pilot, bool)
 
+        assert footer_keys
         assert not any(key.startswith("media_") for key in footer_keys)
 
 

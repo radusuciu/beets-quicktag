@@ -429,7 +429,7 @@ class TestOwnsField:
     def test_flexible_attribute_is_owned(self) -> None:
         assert CategoryDefinitions.owns_field("mood") is True
 
-    @pytest.mark.parametrize("name", ["album", "composer", "albumartist"])
+    @pytest.mark.parametrize("name", ["album", "grouping", "albumartist"])
     def test_fixed_text_field_is_borrowed(self, name: str) -> None:
         assert CategoryDefinitions.owns_field(name) is False
 

@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Multimedia :: Sound/Audio",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -46,19 +47,18 @@ dev = [
     "git-cliff>=2.9.1",
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",
-    "pytest-cov>=5.0.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.11.9",
     "textual-dev>=1.7.0",
 ]
 
 [tool.uv.sources]
-beets = { git = "https://github.com/beetbox/beets.git" }
 just-playback = { git = "https://github.com/radusuciu/just_playback.git", branch = "fix-device-probe-context-leak" }
 
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = [
@@ -91,25 +91,6 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "real_audio: opens a real just_playback device (deselect with '-m \"not real_audio\"')",
-]
-
-[tool.coverage.run]
-source = ["beetsplug"]
-omit = [
-    "*/tests/*",
-    "*/test_*",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "if self.debug:",
-    "if settings.DEBUG",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if __name__ == .__main__.:",
 ]
 
 [tool.git-cliff.changelog]
