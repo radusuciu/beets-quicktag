@@ -66,10 +66,10 @@ class TestCountTracks:
         assert count_tracks(lib, "mood", "a", exclude_id=None) == 2
 
     def test_counts_fixed_scalar_field(self, lib: Library) -> None:
-        add_track(lib, composer="X, Y")
-        add_track(lib, composer="")
-        assert count_tracks(lib, "composer", "Y") == 1
-        assert count_tracks(lib, "composer") == 1
+        add_track(lib, grouping="X, Y")
+        add_track(lib, grouping="")
+        assert count_tracks(lib, "grouping", "Y") == 1
+        assert count_tracks(lib, "grouping") == 1
 
     @needs_list_field
     def test_counts_list_field_tokens(self, lib: Library) -> None:
@@ -125,9 +125,9 @@ class TestRenameOption:
         assert rename_option(lib, "mood", "Hiphop", "Hip-Hop") == 2
 
     def test_fixed_scalar_field(self, lib: Library) -> None:
-        a = add_track(lib, composer="Hiphop, House")
-        rename_option(lib, "composer", "Hiphop", "Hip-Hop")
-        assert value_of(lib, a, "composer") == "Hip-Hop, House"
+        a = add_track(lib, grouping="Hiphop, House")
+        rename_option(lib, "grouping", "Hiphop", "Hip-Hop")
+        assert value_of(lib, a, "grouping") == "Hip-Hop, House"
 
     @needs_list_field
     def test_list_field_stays_a_list(self, lib: Library) -> None:
@@ -246,9 +246,9 @@ class TestRemoveOption:
         assert "mood" not in lib.get_item(a)
 
     def test_last_value_blanks_fixed_field(self, lib: Library) -> None:
-        a = add_track(lib, composer="Hiphop")
-        remove_option(lib, "composer", "Hiphop")
-        assert value_of(lib, a, "composer") == ""
+        a = add_track(lib, grouping="Hiphop")
+        remove_option(lib, "grouping", "Hiphop")
+        assert value_of(lib, a, "grouping") == ""
 
     @needs_list_field
     def test_last_value_empties_list_field(self, lib: Library) -> None:
@@ -279,10 +279,10 @@ class TestRenameCategory:
         assert value_of(lib, a, "vibe") == "b, c, a"
 
     def test_blanks_an_old_fixed_field(self, lib: Library) -> None:
-        a = add_track(lib, composer="a")
-        rename_category(lib, "composer", "mood")
+        a = add_track(lib, grouping="a")
+        rename_category(lib, "grouping", "mood")
         assert value_of(lib, a, "mood") == "a"
-        assert value_of(lib, a, "composer") == ""
+        assert value_of(lib, a, "grouping") == ""
 
     @needs_list_field
     def test_string_to_list_field_changes_shape(self, lib: Library) -> None:
@@ -336,9 +336,9 @@ class TestRemoveCategory:
         assert "mood" not in lib.get_item(b)
 
     def test_blanks_fixed_field(self, lib: Library) -> None:
-        a = add_track(lib, composer="a")
-        remove_category(lib, "composer")
-        assert value_of(lib, a, "composer") == ""
+        a = add_track(lib, grouping="a")
+        remove_category(lib, "grouping")
+        assert value_of(lib, a, "grouping") == ""
 
     @needs_list_field
     def test_empties_list_field(self, lib: Library) -> None:

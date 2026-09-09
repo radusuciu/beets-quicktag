@@ -1136,15 +1136,15 @@ class TestRenameCategoryFlow:
         """Moving every album title into a flex attr and blanking the field
         is not a rename anyone wants from one keystroke."""
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "composer", "Bach")
-        app = make_app(temp_beets_library, {"composer": ["Bach"]})
+        set_field(temp_beets_library, first.id, "grouping", "Live")
+        app = make_app(temp_beets_library, {"grouping": ["Live"]})
         async with app.run_test() as pilot:
-            panel = await start_edit(app, pilot, EditKind.RENAME_CATEGORY, "composer")
+            panel = await start_edit(app, pilot, EditKind.RENAME_CATEGORY, "grouping")
             assert panel.inline_active is False
             assert "built-in beets field" in header_text(app)
             assert app.focused is panel.selection_list
-            assert app.definitions.categories == ["composer"]
-        assert temp_beets_library.get_item(first.id).get("composer") == "Bach"
+            assert app.definitions.categories == ["grouping"]
+        assert temp_beets_library.get_item(first.id).get("grouping") == "Live"
 
     @needs_list_field
     @pytest.mark.asyncio
@@ -1242,23 +1242,23 @@ class TestRemoveCategoryFlow:
         """The field holds data quicktag did not put there; one keystroke
         plus ``y`` must not blank it across the library."""
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "composer", "Bach")
+        set_field(temp_beets_library, first.id, "grouping", "Live")
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(
-            temp_beets_library, {"composer": ["Bach"], "mood": ["happy"]}, path
+            temp_beets_library, {"grouping": ["Live"], "mood": ["happy"]}, path
         )
         async with app.run_test() as pilot:
-            panel = await start_edit(app, pilot, EditKind.REMOVE_CATEGORY, "composer")
+            panel = await start_edit(app, pilot, EditKind.REMOVE_CATEGORY, "grouping")
             assert panel.confirm_prompt.render().plain == (
-                "Remove category 'composer'? It is a built-in beets field, so "
+                "Remove category 'grouping'? It is a built-in beets field, so "
                 "every track keeps its value. y/n"
             )
             await answer(app, pilot, "y")
             assert app.definitions.categories == ["mood"]
             assert [p.id for p in app.query(CategoryPanel)] == ["panel-mood"]
-            assert app.item.get("composer") == "Bach"
+            assert app.item.get("grouping") == "Live"
             assert app.focused is app.query_one("#selection-mood")
             await pilot.press("right")
             await pilot.pause()
-        assert temp_beets_library.get_item(first.id).get("composer") == "Bach"
+        assert temp_beets_library.get_item(first.id).get("grouping") == "Live"
         assert read_definitions_file(path).categories == ["mood"]
