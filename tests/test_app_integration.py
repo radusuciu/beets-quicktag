@@ -19,13 +19,15 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from beets.library import Library
 from textual.pilot import Pilot
-from textual.widgets import Footer, Input, Static
+from textual.widgets import Footer, Input
 from textual.widgets._footer import FooterKey
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
+from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackStateChanged
+from conftest import header_text
 
 
 async def wait_for_footer_keys(
@@ -51,11 +53,6 @@ async def wait_for_footer_keys(
             return keys
 
 
-def header_text(app: QuickTagApp) -> str:
-    """Return the text the header Static actually renders."""
-    return app.query_one("#header_text_content", Static).render().plain
-
-
 class TestQuickTagAppPlaybackConfiguration:
     """Test various autoplay configuration scenarios."""
 
@@ -74,7 +71,7 @@ class TestQuickTagAppPlaybackConfiguration:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=list(config["categories"].items()),
+            definitions=CategoryDefinitions.from_config(config["categories"]),
             autoplay_at_launch_enabled=config["autoplay_at_launch"],
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -104,7 +101,7 @@ class TestQuickTagAppPlaybackConfiguration:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=list(config["categories"].items()),
+            definitions=CategoryDefinitions.from_config(config["categories"]),
             autoplay_at_launch_enabled=config["autoplay_at_launch"],
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -137,7 +134,7 @@ class TestQuickTagAppPlaybackConfiguration:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=list(config["categories"].items()),
+            definitions=CategoryDefinitions.from_config(config["categories"]),
             autoplay_at_launch_enabled=config["autoplay_at_launch"],
             autoplay_on_track_change_enabled=True,
             autonext_at_track_end_enabled=False,
@@ -180,7 +177,7 @@ class TestQuickTagAppPlaybackConfiguration:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=config["autoplay_at_launch"],
             autoplay_on_track_change_enabled=config["autoplay_on_track_change"],
             autonext_at_track_end_enabled=config["autonext_at_track_end"],
@@ -226,7 +223,7 @@ class TestQuickTagAppPlaybackConfiguration:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -266,7 +263,7 @@ class TestQuickTagAppPlaybackConfiguration:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -308,7 +305,7 @@ class TestQuickTagAppNavigation:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -334,7 +331,7 @@ class TestQuickTagAppNavigation:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -361,7 +358,7 @@ class TestQuickTagAppNavigation:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -399,7 +396,7 @@ class TestQuickTagAppNavigation:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -429,7 +426,7 @@ class TestQuickTagAppNavigation:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -443,7 +440,7 @@ class TestQuickTagAppNavigation:
                 await pilot.press("right")
             assert app.current_item_index == len(items) - 1
 
-            app.query_one("#selection-genre", CustomSelectionList).select(0)
+            app.query_one("#selection-genre", CustomSelectionList).select("Rock")
 
             await pilot.press("right")
 
@@ -465,7 +462,7 @@ class TestQuickTagAppPlaybackActions:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -483,7 +480,7 @@ class TestQuickTagAppPlaybackActions:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=[],  # Empty items list
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -506,7 +503,7 @@ class TestQuickTagAppPlaybackActions:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -528,7 +525,7 @@ class TestQuickTagAppPlaybackActions:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -556,7 +553,7 @@ class TestQuickTagAppPlaybackEndedHandling:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=True,  # Enable autonext
@@ -593,7 +590,7 @@ class TestQuickTagAppPlaybackEndedHandling:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,  # Disable autonext
@@ -623,7 +620,7 @@ class TestQuickTagAppPlaybackEndedHandling:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=True,
@@ -661,7 +658,7 @@ class TestQuickTagAppPlaybackEndedHandling:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=True,
@@ -699,7 +696,7 @@ class TestQuickTagAppErrorHandling:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -733,7 +730,7 @@ class TestQuickTagAppErrorHandling:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -760,7 +757,7 @@ class TestQuickTagAppErrorHandling:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -794,7 +791,7 @@ class TestQuickTagAppRealPlaybackIntegration:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=True,
             autonext_at_track_end_enabled=False,
@@ -836,7 +833,7 @@ class TestQuickTagAppRealPlaybackIntegration:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -881,7 +878,7 @@ class TestQuickTagAppMarkupSafety:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -904,7 +901,9 @@ class TestQuickTagAppMarkupSafety:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["lo-fi [chill]", "Rock"])],
+            definitions=CategoryDefinitions.from_config(
+                {"genre": ["lo-fi [chill]", "Rock"]}
+            ),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -933,7 +932,7 @@ class TestQuickTagAppNavigationBindings:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -971,7 +970,7 @@ class TestQuickTagAppNavigationBindings:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -1004,7 +1003,7 @@ class TestQuickTagAppNavigationBindings:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -1042,7 +1041,7 @@ class TestQuickTagAppNavigationBindings:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -1077,7 +1076,7 @@ class TestQuickTagAppNavigationBindings:
         app = QuickTagApp(
             lib=temp_beets_library,
             items=items,
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -1120,7 +1119,7 @@ class TestMediaKeyBindings:
         return QuickTagApp(
             lib=temp_beets_library,
             items=list(temp_beets_library.items()),
-            categories=[("genre", ["Rock", "Pop"])],
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
             autoplay_at_launch_enabled=False,
             autoplay_on_track_change_enabled=False,
             autonext_at_track_end_enabled=False,
@@ -1223,7 +1222,10 @@ class TestTerminalTitle:
         }
         settings.update(overrides)
         return QuickTagApp(
-            lib=lib, items=items, categories=[("genre", ["Rock", "Pop"])], **settings
+            lib=lib,
+            items=items,
+            definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
+            **settings,
         )
 
     @staticmethod

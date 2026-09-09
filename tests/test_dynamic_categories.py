@@ -1,0 +1,831 @@
+"""Adding categories and options from the TUI, and the value shapes they use.
+
+Every test builds the app against the scratch library from ``conftest.py``.
+"""
+
+from pathlib import Path
+
+import pytest
+from beets.library import Item, Library
+from textual.widgets import Input, Static
+
+from beetsplug.quicktag.definitions_file import read_definitions_file
+from beetsplug.quicktag.widgets.category_panel import CategoryPanel
+from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
+from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
+from conftest import LIST_FIELD, make_app, needs_list_field, prompts
+
+
+class TestValueBasedSelections:
+    @pytest.mark.asyncio
+    async def test_selected_returns_option_strings(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test():
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            lst.select("sad")
+            assert lst.selected == ["sad"]
+
+    @pytest.mark.asyncio
+    async def test_save_writes_values_in_definition_order(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad", "calm"]})
+        async with app.run_test():
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            lst.select("calm")
+            lst.select("happy")
+            await app._save_current_item_tags()
+        item = temp_beets_library.get_item(app.item.id)
+        assert item.get("mood") == "happy, calm"
+
+    @pytest.mark.asyncio
+    async def test_load_selects_stored_values(
+        self, temp_beets_library: Library
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "sad, calm"
+        item.store()
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad", "calm"]})
+        async with app.run_test():
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            assert sorted(lst.selected) == ["calm", "sad"]
+
+    @pytest.mark.asyncio
+    async def test_save_with_nothing_selected_does_not_store(
+        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unset fixed text field reads back as ""; that is not a change."""
+        app = make_app(temp_beets_library, {"composer": ["a", "b"]})
+        stores: list[str] = []
+        async with app.run_test():
+            assert (
+                app.query_one("#selection-composer", CustomSelectionList).selected == []
+            )
+            monkeypatch.setattr(
+                app.item, "store", lambda *a, **k: stores.append("store")
+            )
+            await app._save_current_item_tags()
+        assert stores == []
+
+    @needs_list_field
+    @pytest.mark.asyncio
+    async def test_list_field_round_trip(self, temp_beets_library: Library) -> None:
+        app = make_app(temp_beets_library, {LIST_FIELD: ["House", "Acid"]})
+        async with app.run_test():
+            lst = app.query_one(f"#selection-{LIST_FIELD}", CustomSelectionList)
+            lst.select("Acid")
+            await app._save_current_item_tags()
+            item_id = app.item.id
+        item = temp_beets_library.get_item(item_id)
+        assert item[LIST_FIELD] == ["Acid"]
+
+        app2 = make_app(temp_beets_library, {LIST_FIELD: ["House", "Acid"]})
+        async with app2.run_test():
+            lst2 = app2.query_one(f"#selection-{LIST_FIELD}", CustomSelectionList)
+            assert lst2.selected == ["Acid"]
+
+
+class TestAdoptingUnknownValues:
+    @pytest.mark.asyncio
+    async def test_unknown_stored_value_is_adopted_selected_and_persisted(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "happy, Jazzy"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
+        async with app.run_test():
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            assert prompts(lst) == ["happy", "sad", "Jazzy"]
+            assert sorted(lst.selected) == ["Jazzy", "happy"]
+            assert app.definitions.options("mood") == ["happy", "sad", "Jazzy"]
+        assert read_definitions_file(path).options("mood") == [
+            "happy",
+            "sad",
+            "Jazzy",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_adopted_value_survives_save(
+        self, temp_beets_library: Library
+    ) -> None:
+        """Closes the silent data-loss bug: the value is no longer dropped."""
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "Jazzy"
+        item.store()
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test():
+            await app._save_current_item_tags()
+        assert temp_beets_library.get_item(item.id).get("mood") == "Jazzy"
+
+    @pytest.mark.asyncio
+    async def test_case_variant_selects_the_existing_option(
+        self, temp_beets_library: Library
+    ) -> None:
+        """'HAPPY' is the stored 'happy'; it selects it instead of being lost,
+        and merely visiting the track leaves the stored spelling alone."""
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "HAPPY"
+        item.store()
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test():
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            assert lst.option_count == 1
+            assert lst.selected == ["happy"]
+            await app._save_current_item_tags()
+        assert temp_beets_library.get_item(item.id).get("mood") == "HAPPY"
+
+    @pytest.mark.asyncio
+    async def test_case_variant_is_normalised_when_the_selection_changes(
+        self, temp_beets_library: Library
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "HAPPY"
+        item.store()
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test():
+            app.query_one("#selection-mood", CustomSelectionList).select("sad")
+            await app._save_current_item_tags()
+        assert temp_beets_library.get_item(item.id).get("mood") == "happy, sad"
+
+    @needs_list_field
+    @pytest.mark.asyncio
+    async def test_unadoptable_list_value_survives_save(
+        self, temp_beets_library: Library
+    ) -> None:
+        """A stored list entry with a comma cannot become an option, but it
+        must still round-trip untouched."""
+        item = next(iter(temp_beets_library.items()))
+        item[LIST_FIELD] = ["House", "Deep, Dark"]
+        item.store()
+        app = make_app(temp_beets_library, {LIST_FIELD: ["House"]})
+        async with app.run_test():
+            lst = app.query_one(f"#selection-{LIST_FIELD}", CustomSelectionList)
+            assert lst.option_count == 1
+            assert lst.selected == ["House"]
+            await app._save_current_item_tags()
+        stored = temp_beets_library.get_item(item.id)[LIST_FIELD]
+        assert sorted(stored) == ["Deep, Dark", "House"]
+
+    @pytest.mark.asyncio
+    async def test_several_unknown_values_are_all_adopted_in_order(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "Jazzy, Funky"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test():
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            assert app.definitions.options("mood") == ["happy", "Jazzy", "Funky"]
+            assert sorted(lst.selected) == ["Funky", "Jazzy"]
+        assert read_definitions_file(path).options("mood") == [
+            "happy",
+            "Jazzy",
+            "Funky",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_several_unknown_values_write_the_file_once(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "Jazzy, Funky"
+        item["vibe"] = "afro"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        writes: list[dict[str, list[str]]] = []
+        monkeypatch.setattr(
+            "beetsplug.quicktag.app.write_definitions_file",
+            lambda _path, definitions: writes.append(definitions.to_mapping()),
+        )
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": []}, path)
+        async with app.run_test():
+            pass
+        assert writes == [{"mood": ["happy", "Jazzy", "Funky"], "vibe": ["afro"]}]
+
+    @pytest.mark.asyncio
+    async def test_known_values_do_not_write_the_file(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "happy"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        writes: list[str] = []
+        monkeypatch.setattr(
+            "beetsplug.quicktag.app.write_definitions_file",
+            lambda _path, _definitions: writes.append("write"),
+        )
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test():
+            pass
+        assert writes == []
+
+    @pytest.mark.asyncio
+    async def test_text_field_category_does_not_adopt_values(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        """Browsing must not append every label in the library to the file;
+        the stored value is still preserved on save."""
+        item = next(iter(temp_beets_library.items()))
+        item["label"] = "Other"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"label": ["Warp"]}, path)
+        async with app.run_test():
+            lst = app.query_one("#selection-label", CustomSelectionList)
+            assert lst.option_count == 1
+            assert lst.selected == []
+            assert app.definitions.options("label") == ["Warp"]
+            await app._save_current_item_tags()
+        assert temp_beets_library.get_item(item.id).label == "Other"
+        assert not path.exists()
+
+
+class TestPersistDefinitions:
+    @pytest.mark.asyncio
+    async def test_write_failure_is_logged_not_raised(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "Jazzy"
+        item.store()
+        path = tmp_path / "missing" / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test():
+            header = app.query_one("#header_text_content", Static).render().plain
+        assert app.definitions.options("mood") == ["happy", "Jazzy"]
+        assert not path.exists()
+        assert "Could not write categories file" in header
+
+
+class TestSaveErrors:
+    @pytest.mark.asyncio
+    async def test_store_failure_is_shown_after_the_track_changes(
+        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).select("happy")
+
+            def fail(*_args: object, **_kwargs: object) -> None:
+                raise OSError("disk full")
+
+            # Setting an attribute on an Item makes a flex attr, so patch the
+            # class rather than the instance.
+            monkeypatch.setattr(Item, "store", fail)
+            await pilot.press("right")
+            await pilot.pause()
+            assert app.current_item_index == 1
+            header = app.query_one("#header_text_content", Static).render().plain
+            assert "Could not save" in header
+            assert "disk full" in header
+
+    @pytest.mark.asyncio
+    async def test_one_bad_field_does_not_stop_the_save(
+        self, temp_beets_library: Library, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from beetsplug.quicktag import app as app_module
+
+        real_write = app_module.write_item_values
+
+        def write(item: object, category: str, values: list[str]) -> bool:
+            if category == "mood":
+                raise KeyError("computed field mood cannot be deleted")
+            return real_write(item, category, values)
+
+        monkeypatch.setattr(app_module, "write_item_values", write)
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-mood", CustomSelectionList).select("happy")
+            app.query_one("#selection-vibe", CustomSelectionList).select("afro")
+            item_id = app.item.id
+            await pilot.press("right")
+            await pilot.pause()
+            assert app.is_running
+            header = app.query_one("#header_text_content", Static).render().plain
+            assert "mood" in header
+        assert temp_beets_library.get_item(item_id).get("vibe") == "afro"
+
+
+class TestCategoryPanelLayout:
+    @pytest.mark.asyncio
+    async def test_each_category_is_a_panel_with_list_and_hidden_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test():
+            panels = list(app.query(CategoryPanel))
+            assert [p.id for p in panels] == ["panel-mood", "panel-vibe"]
+            mood = app.query_one("#panel-mood", CategoryPanel)
+            assert mood.selection_list.id == "selection-mood"
+            assert str(mood.border_title) == "mood"
+            assert mood.input.display is False
+            assert mood.input_active is False
+
+    @pytest.mark.asyncio
+    async def test_first_list_has_focus_on_mount(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test():
+            assert app.focused is app.query_one("#selection-mood")
+
+
+class TestPlusOpensInlineInput:
+    @pytest.mark.asyncio
+    async def test_plus_reveals_and_focuses_input_of_focused_panel(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            app.query_one("#selection-vibe", CustomSelectionList).focus()
+            await pilot.press("plus")
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            mood = app.query_one("#panel-mood", CategoryPanel)
+            assert vibe.input_active is True
+            assert app.focused is vibe.input
+            assert vibe.input.value == ""
+            assert mood.input_active is False
+
+    @pytest.mark.asyncio
+    async def test_plus_is_typed_into_the_open_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        """The binding lives on the list, so it never fires from an Input."""
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus")
+            await pilot.press("plus")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.input.value == "+"
+
+    @pytest.mark.asyncio
+    async def test_plus_is_listed_in_footer_with_list_focused(
+        self, temp_beets_library: Library
+    ) -> None:
+        from textual.widgets import Footer
+        from textual.widgets._footer import FooterKey
+
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            keys = {key.key for key in app.query_one(Footer).query(FooterKey)}
+            assert "plus" in keys
+
+    @pytest.mark.asyncio
+    async def test_close_input_hides_clears_and_refocuses_list(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "x")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.close_input()
+            await pilot.pause()
+            assert panel.input_active is False
+            assert panel.input.value == ""
+            assert app.focused is panel.selection_list
+
+    @pytest.mark.asyncio
+    async def test_show_error_keeps_input_open_with_message(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "x")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.show_error("Nope.")
+            await pilot.pause()
+            assert panel.input_active is True
+            assert panel.input.value == ""
+            assert panel.input.placeholder == "Nope."
+            assert app.focused is panel.input
+
+    @pytest.mark.asyncio
+    async def test_add_option_appends_highlights_and_optionally_selects(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test():
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.add_option("sad", select=True)
+            panel.add_option("calm", select=False)
+            lst = panel.selection_list
+            assert prompts(lst) == ["happy", "sad", "calm"]
+            assert lst.highlighted == 2
+            assert lst.selected == ["sad"]
+
+
+class TestAddOptionFlow:
+    @pytest.mark.asyncio
+    async def test_enter_adds_selects_persists_and_refocuses_list(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "a", "d", "enter")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            lst = panel.selection_list
+            assert app.definitions.options("mood") == ["happy", "sad"]
+            assert lst.option_count == 2
+            assert lst.selected == ["sad"]
+            assert lst.highlighted == 1
+            assert panel.input_active is False
+            assert app.focused is lst
+        assert read_definitions_file(path).options("mood") == ["happy", "sad"]
+
+    @pytest.mark.asyncio
+    async def test_new_option_is_saved_on_the_current_track(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "a", "d", "enter")
+            item_id = app.item.id
+            await app._save_current_item_tags()
+        assert temp_beets_library.get_item(item_id).get("mood") == "sad"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("typed", "message_part"),
+        [
+            (["enter"], "cannot be empty"),
+            (["h", "a", "p", "p", "y", "enter"], "already has 'happy'"),
+            (["a", "comma", "b", "enter"], "cannot contain a comma"),
+        ],
+    )
+    async def test_invalid_option_shows_error_and_stays_open(
+        self, temp_beets_library: Library, typed: list[str], message_part: str
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", *typed)
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.input_active is True
+            assert message_part in panel.input.placeholder
+            assert panel.input.value == ""
+            assert app.focused is panel.input
+            assert app.definitions.options("mood") == ["happy"]
+
+    @pytest.mark.asyncio
+    async def test_error_placeholder_resets_on_next_open(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "enter")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            panel.close_input()
+            await pilot.press("plus")
+            assert "Enter to add" in panel.input.placeholder
+
+
+class TestAddCategoryFlow:
+    @pytest.mark.asyncio
+    async def test_ctrl_n_reveals_input_above_comments(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is False
+            await pilot.press("ctrl+n")
+            assert new_input.display is True
+            assert app.focused is new_input
+            screen_children = list(app.screen.children)
+            comments_index = screen_children.index(app.query_one(InputWithLabel))
+            assert screen_children[comments_index - 1] is new_input
+
+    @pytest.mark.asyncio
+    async def test_enter_mounts_empty_panel_before_comments_and_persists(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "i", "b", "e", "enter")
+            await pilot.pause()
+            assert app.definitions.categories == ["mood", "vibe"]
+            panels = [p.id for p in app.query(CategoryPanel)]
+            assert panels == ["panel-mood", "panel-vibe"]
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert vibe.selection_list.option_count == 0
+            assert app.focused is vibe.selection_list
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is False
+            assert new_input.value == ""
+            screen_children = list(app.screen.children)
+            assert screen_children.index(vibe) < screen_children.index(new_input)
+            assert screen_children.index(new_input) < screen_children.index(
+                app.query_one(InputWithLabel)
+            )
+        assert read_definitions_file(path).to_mapping() == {
+            "mood": ["happy"],
+            "vibe": [],
+        }
+
+    @pytest.mark.asyncio
+    async def test_plus_then_enter_in_new_panel_adds_first_option(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "i", "b", "e", "enter")
+            await pilot.pause()
+            await pilot.press("plus", "a", "f", "r", "o", "enter")
+            assert app.definitions.options("vibe") == ["afro"]
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert vibe.selection_list.selected == ["afro"]
+
+    @pytest.mark.asyncio
+    async def test_new_category_is_saved_and_loaded(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "i", "b", "e", "enter")
+            await pilot.pause()
+            await pilot.press("plus", "a", "f", "r", "o", "enter")
+            item_id = app.item.id
+            await pilot.press("right")  # saves the first item
+            await pilot.press("left")  # reloads it
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert vibe.selection_list.selected == ["afro"]
+        assert temp_beets_library.get_item(item_id).get("vibe") == "afro"
+
+    @pytest.mark.asyncio
+    async def test_new_category_keeps_the_tracks_existing_value(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        """The track already carries the field; the fresh panel must show
+        that value, or the next save would delete it."""
+        item = next(iter(temp_beets_library.items()))
+        item["vibe"] = "afro"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "i", "b", "e", "enter")
+            await pilot.pause()
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert app.definitions.options("vibe") == ["afro"]
+            assert vibe.selection_list.selected == ["afro"]
+            await pilot.press("right")
+        assert temp_beets_library.get_item(item.id).get("vibe") == "afro"
+        assert read_definitions_file(path).options("vibe") == ["afro"]
+
+    @needs_list_field
+    @pytest.mark.asyncio
+    async def test_new_list_field_category_keeps_the_tracks_existing_value(
+        self, temp_beets_library: Library
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item[LIST_FIELD] = ["House"]
+        item.store()
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", *LIST_FIELD, "enter")
+            await pilot.pause()
+            panel = app.query_one(f"#panel-{LIST_FIELD}", CategoryPanel)
+            assert panel.selection_list.selected == ["House"]
+            await pilot.press("right")
+        assert temp_beets_library.get_item(item.id)[LIST_FIELD] == ["House"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("typed", "message_part"),
+        [
+            (["enter"], "letters, digits"),
+            (["m", "o", "o", "d", "enter"], "already exists"),
+            (["y", "e", "a", "r", "enter"], "built-in beets field"),
+            (list("filesize") + ["enter"], "computed beets field"),
+            (["1", "a", "enter"], "letters, digits"),
+        ],
+    )
+    async def test_invalid_name_shows_error_and_stays_open(
+        self, temp_beets_library: Library, typed: list[str], message_part: str
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", *typed)
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is True
+            assert message_part in new_input.placeholder
+            assert new_input.value == ""
+            assert app.focused is new_input
+            assert app.definitions.categories == ["mood"]
+
+    @pytest.mark.asyncio
+    async def test_comments_enter_does_not_add_a_category(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            app.query_one(InputWithLabel).query_one(Input).focus()
+            await pilot.press("h", "i", "enter")
+            assert app.definitions.categories == ["mood"]
+            assert app.query_one(InputWithLabel).value == "hi"
+
+    @pytest.mark.asyncio
+    async def test_ctrl_n_while_already_open_keeps_the_typed_text(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "ctrl+n")
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is True
+            assert new_input.value == "v"
+            assert app.focused is new_input
+
+    @pytest.mark.asyncio
+    async def test_ctrl_n_works_with_no_categories_at_all(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "m", "o", "o", "d", "enter")
+            await pilot.pause()
+            assert app.definitions.categories == ["mood"]
+            assert app.query_one("#panel-mood", CategoryPanel)
+
+
+class TestOnlyOneInlineEditOpen:
+    @pytest.mark.asyncio
+    async def test_ctrl_n_closes_an_open_option_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "a", "ctrl+n")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            new_input = app.query_one("#new-category-input", Input)
+            assert panel.input_active is False
+            assert panel.input.value == ""
+            assert new_input.display is True
+            assert app.focused is new_input
+            await pilot.press("escape")
+            assert new_input.display is False
+            assert app.focused is panel.selection_list
+
+    @pytest.mark.asyncio
+    async def test_plus_closes_the_open_category_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v")
+            # "+" typed into the focused Input would be text, so go back to
+            # the list the way the user would (Tab is bound elsewhere).
+            app.query_one("#selection-mood", CustomSelectionList).focus()
+            await pilot.press("plus")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is False
+            assert new_input.value == ""
+            assert panel.input_active is True
+            assert app.focused is panel.input
+
+    @pytest.mark.asyncio
+    async def test_plus_closes_another_panels_input(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"], "vibe": ["afro"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s")
+            app.query_one("#selection-vibe", CustomSelectionList).focus()
+            await pilot.press("plus")
+            mood = app.query_one("#panel-mood", CategoryPanel)
+            vibe = app.query_one("#panel-vibe", CategoryPanel)
+            assert mood.input_active is False
+            assert mood.input.value == ""
+            assert vibe.input_active is True
+            assert app.focused is vibe.input
+
+
+class TestEscape:
+    @pytest.mark.asyncio
+    async def test_escape_cancels_option_input_and_does_not_quit(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "a", "escape")
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            assert panel.input_active is False
+            assert panel.input.value == ""
+            assert app.focused is panel.selection_list
+            assert app.definitions.options("mood") == ["happy"]
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_escape_cancels_category_input_and_does_not_quit(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "v", "escape")
+            new_input = app.query_one("#new-category-input", Input)
+            assert new_input.display is False
+            assert new_input.value == ""
+            assert app.focused is app.query_one("#selection-mood")
+            assert app.definitions.categories == ["mood"]
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_escape_with_no_categories_focuses_the_comments_field(
+        self, temp_beets_library: Library
+    ) -> None:
+        """There is no list to fall back to, and focus must not be lost."""
+        app = make_app(temp_beets_library, {})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n", "escape")
+            assert app.query_one("#new-category-input", Input).display is False
+            assert app.focused is app.query_one(
+                "#comments-input", InputWithLabel
+            ).query_one(Input)
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_escape_with_nothing_open_quits(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("escape")
+            await pilot.pause()
+        assert app.return_code == 0 or not app.is_running
+
+    @pytest.mark.asyncio
+    async def test_ctrl_q_quits_with_an_input_open(
+        self, temp_beets_library: Library
+    ) -> None:
+        """Textual's built-in ctrl+q must not be demoted to a cancel."""
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "s", "ctrl+q")
+            await pilot.pause()
+            # Leaving run_test() stops the app anyway, so check before that.
+            assert app.return_code == 0
+
+    @pytest.mark.asyncio
+    async def test_second_escape_quits(self, temp_beets_library: Library) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy"]})
+        async with app.run_test() as pilot:
+            await pilot.press("plus", "escape")
+            assert app.is_running
+            await pilot.press("escape")
+            await pilot.pause()
+        assert not app.is_running
+
+
+class TestAddCategoryScrolling:
+    """With enough categories the screen scrolls; the input must come into view."""
+
+    MANY = {f"cat{i:02d}": ["a", "b", "c"] for i in range(12)}
+
+    @pytest.mark.asyncio
+    async def test_ctrl_n_scrolls_the_new_category_input_into_view(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, self.MANY)
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = app.screen
+            assert screen.max_scroll_y > 0, "test needs a screen that scrolls"
+            assert screen.scroll_y == 0
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            await pilot.pause()
+            new_input = app.query_one("#new-category-input", Input)
+            assert app.focused is new_input
+            assert screen.can_view_entire(new_input)
+
+    @pytest.mark.asyncio
+    async def test_plus_scrolls_the_option_input_of_the_last_panel_into_view(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, self.MANY)
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = app.screen
+            assert screen.max_scroll_y > 0, "test needs a screen that scrolls"
+            last = app.query_one("#panel-cat11", CategoryPanel)
+            last.selection_list.focus()
+            await pilot.pause()
+            await pilot.press("plus")
+            await pilot.pause()
+            await pilot.pause()
+            assert app.focused is last.input
+            assert screen.can_view_entire(last.input)
