@@ -6,6 +6,7 @@ Provides fixtures for:
 - Generated MP3 test files using ffmpeg
 - Mock configurations for different scenarios
 - A fake just_playback player for every test (see ``fake_playback``)
+- Plain helpers shared by the TUI tests (``make_app``, ``header_text``, ...)
 """
 
 import shutil
@@ -17,9 +18,74 @@ from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
-from beets.library import Library
+from beets.library import Item, Library
 from just_playback import Playback
 from mutagen.id3 import ID3, TALB, TIT2, TPE1
+from textual.pilot import Pilot
+from textual.widgets import Static
+
+from beetsplug.quicktag.app import QuickTagApp
+from beetsplug.quicktag.definitions import CategoryDefinitions
+from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
+
+# The only fixed list-valued field that works as a category. Older beets
+# versions have a plain-text ``genre`` and no ``genres``.
+LIST_FIELD = "genres"
+needs_list_field = pytest.mark.skipif(
+    not CategoryDefinitions.is_list_field(LIST_FIELD),
+    reason="installed beets has no list-valued 'genres' field",
+)
+
+
+def make_app(
+    lib: Library,
+    mapping: dict[str, list[str]],
+    definitions_path: Path | None = None,
+    items: list[Item] | None = None,
+    **settings: bool,
+) -> QuickTagApp:
+    """An app over ``lib`` with every playback automation off unless
+    ``settings`` says otherwise."""
+    flags: dict[str, bool] = {
+        "autoplay_at_launch_enabled": False,
+        "autoplay_on_track_change_enabled": False,
+        "autonext_at_track_end_enabled": False,
+        "autosave_on_quit_enabled": False,
+        "keep_playing_on_track_change_if_playing_enabled": False,
+    }
+    flags.update(settings)
+    return QuickTagApp(
+        lib=lib,
+        items=list(lib.items()) if items is None else items,
+        definitions=CategoryDefinitions.from_config(mapping),
+        definitions_path=definitions_path,
+        **flags,
+    )
+
+
+def header_text(app: QuickTagApp) -> str:
+    """The text the header line actually renders."""
+    return app.query_one("#header_text_content", Static).render().plain
+
+
+def prompts(selection_list: CustomSelectionList) -> list[str]:
+    """The option labels of ``selection_list`` in display order."""
+    return [
+        str(selection_list.get_option_at_index(i).prompt)
+        for i in range(selection_list.option_count)
+    ]
+
+
+async def settle(app: QuickTagApp, pilot: Pilot[None]) -> None:
+    """Wait for work the app runs in worker threads, and for what follows it.
+
+    A library count, a migration and the queue reload after it each run off
+    the event loop, where ``pilot.pause`` cannot see them, and each one's
+    continuation may start the next.
+    """
+    for _ in range(3):
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
 
 def make_fake_player(

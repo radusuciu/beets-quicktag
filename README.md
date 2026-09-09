@@ -45,8 +45,12 @@ This opens a TUI that plays each track and shows a checklist per category, plus 
 | `Space` / `Enter` | Toggle the highlighted value |
 | Letter or digit | Jump to the next value in the list that starts with that character |
 | `+` | Add a value to the focused category (type it, `Enter` to add, `Escape` to cancel) |
+| `F2` | Rename the highlighted value (edit it, `Enter` to apply, `Escape` to cancel) |
+| `Delete` | Delete the highlighted value |
 | `Ctrl+N` | Add a category (type its name, `Enter` to add, `Escape` to cancel) |
-| `Escape` | Cancel an open add-value / add-category input, otherwise quit |
+| `Ctrl+R` | Rename the focused category |
+| `Ctrl+D` | Delete the focused category |
+| `Escape` | Cancel an open input or `y/n` prompt, otherwise quit |
 | Media keys | Play/pause, stop, next and previous track (see below) |
 
 The footer shows the keys that apply to the focused widget. While the comments field has focus, `Left` and `Right` move the text cursor, and `/`, `<` and `>` are typed into the comment, so the footer drops those entries. Press `Tab` to leave the field first.
@@ -56,6 +60,8 @@ Hardware media keys (play/pause, stop, next track, previous track) work when the
 Tags are saved when you move to another track, and on quit if `autosave_on_quit` is on. Selected values are joined with `, ` and stored in the beets database only; audio files are not written to. A category is stored as a flexible attribute unless its name is a built-in beets field: a list-valued field such as `genres` (beets 2.7+) is stored as a list, and a text field is stored as text. If a track already carries a value that is not in the category's list, the value is added to the list rather than dropped, except for a category that is a built-in text field, where the value is kept on the track but not added to the list. A value that differs from an existing option only by case selects that option instead, and its stored spelling is left alone until the track's selection changes.
 
 A new value typed with `+` is selected for the current track right away. A new category made with `Ctrl+N` starts empty; press `+` to give it values.
+
+Renaming or deleting a value or a category also updates every track in the library that carries it, in the beets database only. A delete always asks first; a rename asks when at least one track is affected, and the prompt says how many. The count includes the current track's unsaved selection; pressing `y` saves the track before the library is updated. Answer `y` to go ahead or `n` (or `Escape`) to cancel. Renaming a value onto one that already exists merges the two (`Hiphop` into `Hip-Hop`, say), and the prompt says so. Renaming a category moves its values into the new field in that field's shape: renaming `genre` to `genres` on beets 2.7+ turns the comma-separated text into the list-valued built-in field. A category that is a built-in text field (for example `album`) cannot be renamed, and deleting it only removes it from the list: the field keeps its values on every track. If the database update fails nothing changes and the header says so.
 
 ## Configuration
 
@@ -77,7 +83,7 @@ quicktag:
       - angry
 ```
 
-Categories live in a YAML file, `quicktag_categories.yaml` next to your beets `config.yaml` by default. On the first run the file is created from the `categories` section above and a message says so; from then on the file is what counts and the `categories` section is ignored. The file has the same shape as the config section (name → list of values) and can be edited by hand, or from the TUI with `+` and `Ctrl+N`. Key order is display order. If the file cannot be parsed, `beet quicktag` stops and prints the path and the error rather than overwriting it.
+Categories live in a YAML file, `quicktag_categories.yaml` next to your beets `config.yaml` by default. On the first run the file is created from the `categories` section above and a message says so; from then on the file is what counts and the `categories` section is ignored. The file has the same shape as the config section (name → list of values) and can be edited by hand, or from the TUI with `+`, `F2`, `Delete`, `Ctrl+N`, `Ctrl+R` and `Ctrl+D`. Key order is display order. If the file cannot be parsed, `beet quicktag` stops and prints the path and the error rather than overwriting it.
 
 Category names may only contain letters, digits, underscores and hyphens, cannot start with a digit, and cannot be `comments`. From the TUI a built-in beets field name is refused, except `genres`; a file or config that already names a built-in text field (for example `album`) is accepted with a warning at startup. Other list-valued fields such as `artists` and `albumtypes` are refused everywhere, because beets keeps them in step with companion fields. Names and values must be unique within their list ignoring case. Values cannot contain commas, and `genres` values cannot contain `; `, which beets uses to separate them.
 

@@ -3,7 +3,10 @@
 import pytest
 from beets.library import Item
 
-from beetsplug.quicktag.definitions import CategoryDefinitions
+from beetsplug.quicktag.definitions import (
+    CategoryDefinitions,
+    find_case_insensitive,
+)
 
 # Fixed list-valued fields other than ``genres`` in the installed beets.
 OTHER_LIST_FIELDS = sorted(
@@ -351,3 +354,99 @@ class TestFromConfig:
         # dict keys are case-sensitive, so YAML can hand us both.
         with pytest.raises(ValueError, match="already exists"):
             CategoryDefinitions.from_config({"mood": ["a"], "Mood": ["b"]})
+
+
+class TestPlanningAnEdit:
+    """The app edits a copy first and swaps it in once the library agrees."""
+
+    @pytest.fixture
+    def defs(self) -> CategoryDefinitions:
+        return CategoryDefinitions.from_config(
+            {"mood": ["Hiphop", "Hip-Hop", "House"], "vibe": ["afro"]}
+        )
+
+    def test_copy_is_independent(self, defs: CategoryDefinitions) -> None:
+        planned = defs.copy()
+        planned.rename_option("mood", "House", "Techno")
+        planned.remove_category("vibe")
+        assert defs.options("mood") == ["Hiphop", "Hip-Hop", "House"]
+        assert defs.categories == ["mood", "vibe"]
+        assert planned.options("mood") == ["Hiphop", "Hip-Hop", "Techno"]
+        assert planned.categories == ["mood"]
+
+    def test_rename_option_returns_the_trimmed_value(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.rename_option("mood", "House", "  Deep House ") == "Deep House"
+
+    def test_rename_option_returns_the_same_value_for_a_no_op(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.rename_option("mood", "House", "House") == "House"
+        assert defs.options("mood") == ["Hiphop", "Hip-Hop", "House"]
+
+    def test_rename_option_case_only_rename_of_itself_is_not_a_merge(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.rename_option("mood", "House", "HOUSE") == "HOUSE"
+        assert defs.options("mood") == ["Hiphop", "Hip-Hop", "HOUSE"]
+
+    @pytest.mark.parametrize(
+        ("old", "typed"), [("Hiphop", "hip-hop"), ("House", "HIPHOP")]
+    )
+    def test_merge_returns_the_stored_spelling(
+        self, defs: CategoryDefinitions, old: str, typed: str
+    ) -> None:
+        """Whichever side of the dropped entry the target is on."""
+        result = defs.rename_option("mood", old, typed)
+        assert result in defs.options("mood")
+        assert result.casefold() == typed.casefold()
+        assert old not in defs.options("mood")
+
+    def test_rename_category_returns_the_trimmed_name(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.rename_category("mood", " feel ") == "feel"
+        assert defs.categories == ["feel", "vibe"]
+
+    def test_rename_category_refuses_a_fixed_text_field(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        with pytest.raises(ValueError, match="built-in beets field"):
+            defs.rename_category("mood", "album")
+
+    @pytest.mark.skipif(
+        not CategoryDefinitions.is_list_field("genres"),
+        reason="installed beets has no list-valued 'genres' field",
+    )
+    def test_rename_category_allows_the_supported_list_field(
+        self, defs: CategoryDefinitions
+    ) -> None:
+        assert defs.rename_category("mood", "genres") == "genres"
+
+
+class TestOwnsField:
+    def test_flexible_attribute_is_owned(self) -> None:
+        assert CategoryDefinitions.owns_field("mood") is True
+
+    @pytest.mark.parametrize("name", ["album", "composer", "albumartist"])
+    def test_fixed_text_field_is_borrowed(self, name: str) -> None:
+        assert CategoryDefinitions.owns_field(name) is False
+
+    @pytest.mark.skipif(
+        not CategoryDefinitions.is_list_field("genres"),
+        reason="installed beets has no list-valued 'genres' field",
+    )
+    def test_supported_list_field_is_owned(self) -> None:
+        assert CategoryDefinitions.owns_field("genres") is True
+
+
+class TestFindCaseInsensitive:
+    def test_returns_the_first_match_ignoring_case_and_whitespace(self) -> None:
+        assert find_case_insensitive(["a", "B", "b"], " b ") == 1
+
+    def test_returns_none_without_a_match(self) -> None:
+        assert find_case_insensitive(["a"], "zzz") is None
+
+    def test_folds_non_ascii(self) -> None:
+        assert find_case_insensitive(["CAFÉ"], "café") == 0

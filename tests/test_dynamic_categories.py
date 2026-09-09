@@ -9,36 +9,11 @@ import pytest
 from beets.library import Item, Library
 from textual.widgets import Input, Static
 
-from beetsplug.quicktag.app import QuickTagApp
-from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.definitions_file import read_definitions_file
 from beetsplug.quicktag.widgets.category_panel import CategoryPanel
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
-
-LIST_FIELD = "genres"
-needs_list_field = pytest.mark.skipif(
-    not CategoryDefinitions.is_list_field(LIST_FIELD),
-    reason="installed beets has no list-valued 'genres' field",
-)
-
-
-def make_app(
-    lib: Library,
-    mapping: dict[str, list[str]],
-    definitions_path: Path | None = None,
-) -> QuickTagApp:
-    return QuickTagApp(
-        lib=lib,
-        items=list(lib.items()),
-        definitions=CategoryDefinitions.from_config(mapping),
-        autoplay_at_launch_enabled=False,
-        autoplay_on_track_change_enabled=False,
-        autonext_at_track_end_enabled=False,
-        autosave_on_quit_enabled=False,
-        keep_playing_on_track_change_if_playing_enabled=False,
-        definitions_path=definitions_path,
-    )
+from conftest import LIST_FIELD, make_app, needs_list_field, prompts
 
 
 class TestValueBasedSelections:
@@ -124,10 +99,7 @@ class TestAdoptingUnknownValues:
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
         async with app.run_test():
             lst = app.query_one("#selection-mood", CustomSelectionList)
-            prompts = [
-                str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)
-            ]
-            assert prompts == ["happy", "sad", "Jazzy"]
+            assert prompts(lst) == ["happy", "sad", "Jazzy"]
             assert sorted(lst.selected) == ["Jazzy", "happy"]
             assert app.definitions.options("mood") == ["happy", "sad", "Jazzy"]
         assert read_definitions_file(path).options("mood") == [
@@ -451,9 +423,7 @@ class TestPlusOpensInlineInput:
             panel.add_option("sad", select=True)
             panel.add_option("calm", select=False)
             lst = panel.selection_list
-            assert [
-                str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)
-            ] == ["happy", "sad", "calm"]
+            assert prompts(lst) == ["happy", "sad", "calm"]
             assert lst.highlighted == 2
             assert lst.selected == ["sad"]
 

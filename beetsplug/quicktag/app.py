@@ -1,7 +1,11 @@
+from collections.abc import Awaitable, Callable, Sequence
 from enum import Enum
+from functools import partial
 from pathlib import Path
+from typing import TypeVar
 
 from beets.dbcore.db import Results as BeetsResults
+from beets.dbcore.query import InQuery
 from beets.library import Item as BeetsItem
 from beets.library import Library as BeetsLibrary
 from textual.app import App, ComposeResult
@@ -9,12 +13,20 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.dom import NoMatches
 from textual.widgets import Footer, Input, Static
+from textual.worker import WorkerFailed
 
-from .definitions import CategoryDefinitions
+from .definitions import CategoryDefinitions, find_case_insensitive
 from .definitions_file import write_definitions_file
 from .item_values import read_item_values, write_item_values
+from .library_ops import (
+    count_tracks,
+    remove_category,
+    remove_option,
+    rename_category,
+    rename_option,
+)
 from .widgets.category_panel import CategoryPanel
-from .widgets.custom_selection_list import CustomSelectionList
+from .widgets.custom_selection_list import CustomSelectionList, EditKind
 from .widgets.inline_input import InlineInput
 from .widgets.input_with_label import InputWithLabel
 from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidget
@@ -58,6 +70,11 @@ class HeaderWidget(Vertical):
     def __init__(self, playback_widget: PlaybackWidget, item=None, **kwargs):
         super().__init__(**kwargs)
         self.item: BeetsItem = item
+        # A message replaces the title line until it is cleared; the title
+        # is re-rendered underneath it, never over it.
+        self._message: str | None = None
+        # What a transient message covers, restored when it is cleared.
+        self._before: str | None = None
         # markup=False: titles and status messages are literal text, and
         # real-world metadata contains brackets (e.g. "Song [feat. X]").
         self._header_text_display = Static(id="header_text_content", markup=False)
@@ -73,19 +90,52 @@ class HeaderWidget(Vertical):
         self.update_header()
 
     def update_header(self, item: BeetsItem | None = None) -> None:
-        """Updates the header text."""
+        """Store ``item`` and show its title, unless a message is on screen."""
         if item:
             self.item = item
-
-        header_text_value = "QuickTag"
-        if self.item:
-            header_text_value = f"Tagging: {self.item.artist} - {self.item.title}"
-
-        self._header_text_display.update(header_text_value)
+        self._render_line()
 
     def show_message(self, text: str) -> None:
-        """Replace the title line with ``text`` until ``update_header`` runs."""
+        """Replace the title line with ``text`` until ``clear_message``."""
+        self._message = text
+        self._before = None
+        self._render_line()
+
+    def clear_message(self) -> None:
+        """Drop the message and show the title again."""
+        self._message = None
+        self._before = None
+        self._render_line()
+
+    def show_transient(self, text: str) -> None:
+        """Show ``text`` over whatever is on the line, to be put back by
+        ``clear_transient``."""
+        self._before = self._message
+        self._message = text
+        self._render_line()
+
+    def clear_transient(self) -> None:
+        """Put back what the transient message covered: a message, or the
+        title when there was none."""
+        self._message = self._before
+        self._before = None
+        self._render_line()
+
+    def _render_line(self) -> None:
+        if self._message is not None:
+            text = self._message
+        elif self.item:
+            text = f"Tagging: {self.item.artist} - {self.item.title}"
+        else:
+            text = "QuickTag"
         self._header_text_display.update(text)
+
+
+# Tracks re-fetched per query after a migration; well under sqlite's limit
+# on bound variables.
+_RELOAD_CHUNK = 500
+
+T = TypeVar("T")
 
 
 class QuickTagApp(App):
@@ -121,7 +171,7 @@ class QuickTagApp(App):
     def __init__(
         self,
         lib: BeetsLibrary,
-        items: BeetsResults,
+        items: BeetsResults | Sequence[BeetsItem],
         definitions: CategoryDefinitions,
         autoplay_on_track_change_enabled: bool,
         autoplay_at_launch_enabled: bool,
@@ -260,23 +310,307 @@ class QuickTagApp(App):
             return False
         return True
 
-    def on_category_panel_option_submitted(
-        self, message: CategoryPanel.OptionSubmitted
+    async def on_category_panel_edit_requested(
+        self, message: CategoryPanel.EditRequested
     ) -> None:
-        """Enter in a panel's inline input: validate, persist, show, select.
+        """An editing key on a panel's list (everything except add)."""
+        panel, kind, value = message.panel, message.kind, message.value
+        category = panel.category
+        if kind is EditKind.RENAME_OPTION and value is not None:
+            panel.open_input(kind, target=value, initial=value)
+        elif kind is EditKind.REMOVE_OPTION and value is not None:
+            planned = self.definitions.copy()
+            planned.remove_option(category, value)
+            count = await self._count_tracks(category, value)
+            panel.open_confirm(
+                f"Delete '{value}' from {count} tracks? y/n",
+                partial(
+                    self._edit_options,
+                    panel,
+                    planned,
+                    partial(remove_option, self.lib, category, value),
+                ),
+            )
+        elif kind is EditKind.RENAME_CATEGORY:
+            if not CategoryDefinitions.owns_field(category):
+                self.header_widget.show_message(
+                    f"'{category}' is a built-in beets field; its category "
+                    "cannot be renamed."
+                )
+                return
+            panel.open_input(kind, initial=category)
+        elif kind is EditKind.REMOVE_CATEGORY:
+            planned = self.definitions.copy()
+            planned.remove_category(category)
+            if not CategoryDefinitions.owns_field(category):
+                # The field holds data quicktag did not put there, so the
+                # category is only unlisted.
+                panel.open_confirm(
+                    f"Remove category '{category}'? It is a built-in beets "
+                    "field, so every track keeps its value. y/n",
+                    partial(self._remove_category, panel, planned, None),
+                )
+                return
+            count = await self._count_tracks(category)
+            panel.open_confirm(
+                f"Delete category '{category}' and its values from {count} tracks? y/n",
+                partial(
+                    self._remove_category,
+                    panel,
+                    planned,
+                    partial(remove_category, self.lib, category),
+                ),
+            )
+
+    async def on_category_panel_inline_submitted(
+        self, message: CategoryPanel.InlineSubmitted
+    ) -> None:
+        """Enter in a panel's inline input, dispatched on what it was opened for."""
+        if message.kind is EditKind.ADD_OPTION:
+            self._add_option(message.panel, message.value)
+        elif message.kind is EditKind.RENAME_OPTION and message.target is not None:
+            await self._submit_option_rename(
+                message.panel, message.target, message.value
+            )
+        elif message.kind is EditKind.RENAME_CATEGORY:
+            await self._submit_category_rename(message.panel, message.value)
+
+    def _add_option(self, panel: CategoryPanel, typed: str) -> None:
+        """Validate, persist, show and select a new option.
 
         Typing a new option almost always means the current track should get
         it, so the new option is selected as well as highlighted.
         """
-        panel = message.panel
         try:
-            value = self.definitions.add_option(panel.category, message.value)
+            value = self.definitions.add_option(panel.category, typed)
         except ValueError as error:
             panel.show_error(str(error))
             return
         self._persist_definitions()
         panel.add_option(value, select=True)
         panel.close_input()
+
+    async def _submit_option_rename(
+        self, panel: CategoryPanel, old: str, typed: str
+    ) -> None:
+        """Plan the rename, then apply it directly or ask first."""
+        category = panel.category
+        planned = self.definitions.copy()
+        try:
+            new = planned.rename_option(category, old, typed)
+        except ValueError as error:
+            panel.show_error(str(error))
+            return
+        if new == old:
+            panel.close_input()
+            return
+        # A merge drops the old entry instead of renaming it in place.
+        merged = len(planned.options(category)) < len(
+            self.definitions.options(category)
+        )
+        count = await self._count_tracks(category, old)
+        run = partial(
+            self._edit_options,
+            panel,
+            planned,
+            partial(rename_option, self.lib, category, old, new),
+        )
+        if merged:
+            question = f"Merge '{old}' into '{new}' on {count} tracks? y/n"
+        elif count:
+            question = f"Rename '{old}' to '{new}' on {count} tracks? y/n"
+        else:
+            question = None
+        await self._confirm_or_run(panel, question, run)
+
+    async def _submit_category_rename(self, panel: CategoryPanel, typed: str) -> None:
+        """Plan the rename, then apply it directly or ask first."""
+        old = panel.category
+        planned = self.definitions.copy()
+        try:
+            new = planned.rename_category(old, typed)
+        except ValueError as error:
+            panel.show_error(str(error))
+            return
+        if new == old:
+            panel.close_input()
+            return
+        count = await self._count_tracks(old)
+        run = partial(
+            self._rename_category,
+            panel,
+            planned,
+            new,
+            partial(rename_category, self.lib, old, new),
+        )
+        question = (
+            f"Rename category '{old}' to '{new}' on {count} tracks? y/n"
+            if count
+            else None
+        )
+        await self._confirm_or_run(panel, question, run)
+
+    async def _confirm_or_run(
+        self,
+        panel: CategoryPanel,
+        question: str | None,
+        run: Callable[[], Awaitable[None]],
+    ) -> None:
+        """Ask ``question`` on the panel's inline line, or just run when None."""
+        if question is not None:
+            panel.open_confirm(question, run)
+            return
+        panel.close_input()
+        await run()
+
+    async def _count_tracks(self, category: str, value: str | None = None) -> int:
+        """Count off the event loop: it scans the whole library.
+
+        The current track is counted as the panel shows it, pending
+        selection included, and not stored first: cancelling the prompt
+        must leave it exactly as it was.
+        """
+        shown = self._shown_values(category)
+        if shown is None:
+            return await self._off_loop(
+                partial(count_tracks, self.lib, category, value)
+            )
+        count = await self._off_loop(
+            partial(count_tracks, self.lib, category, value, exclude_id=self.item.id)
+        )
+        if value is None:
+            has_value = bool(shown)
+        else:
+            has_value = find_case_insensitive(shown, value) is not None
+        return count + int(has_value)
+
+    def _shown_values(self, category: str) -> list[str] | None:
+        """The current track's ``category`` values as the screen has them.
+
+        Selected options plus the values the track carries that could not
+        become options: exactly what a save would write. ``None`` when
+        there is no track or no list for ``category``.
+        """
+        if not self.item:
+            return None
+        try:
+            selected = list(self._selection_list(category).selected)
+        except NoMatches:
+            return None
+        return selected + self._unadoptable_values.get(category, [])
+
+    async def _off_loop(self, work: Callable[[], T]) -> T:
+        """Run ``work`` in a thread so the UI keeps painting; re-raise its error.
+
+        beets opens one connection per thread and the library functions
+        fetch and store within one call, so they are safe off the loop.
+        """
+        worker = self.run_worker(work, thread=True, exit_on_error=False)
+        try:
+            return await worker.wait()
+        except WorkerFailed as failed:
+            raise failed.error from None
+
+    async def _edit_options(
+        self,
+        panel: CategoryPanel,
+        planned: CategoryDefinitions,
+        migrate: Callable[[], int],
+    ) -> None:
+        """Migrate, swap the definitions in, rebuild the list, reload the track."""
+        highlighted = panel.selection_list.highlighted
+        changed = await self._apply_edit(planned, migrate)
+        if changed is None:
+            return
+        panel.set_options(
+            self.definitions.options(panel.category), highlighted=highlighted
+        )
+        await self._refresh_tracks(changed)
+
+    async def _rename_category(
+        self,
+        panel: CategoryPanel,
+        planned: CategoryDefinitions,
+        new: str,
+        migrate: Callable[[], int],
+    ) -> None:
+        """A widget id cannot change, so the panel is replaced in place."""
+        changed = await self._apply_edit(planned, migrate)
+        if changed is None:
+            return
+        replacement = CategoryPanel(new, self.definitions.options(new))
+        await self.mount(replacement, before=panel)
+        await panel.remove()
+        await self._refresh_tracks(changed)
+        replacement.selection_list.focus()
+
+    async def _remove_category(
+        self,
+        panel: CategoryPanel,
+        planned: CategoryDefinitions,
+        migrate: Callable[[], int] | None,
+    ) -> None:
+        panels = list(self.query(CategoryPanel))
+        index = panels.index(panel)
+        changed = await self._apply_edit(planned, migrate)
+        if changed is None:
+            return
+        await panel.remove()
+        await self._refresh_tracks(changed)
+        remaining = list(self.query(CategoryPanel))
+        if remaining:
+            # The panel that took the removed one's place, or the last one.
+            remaining[min(index, len(remaining) - 1)].selection_list.focus()
+        else:
+            self._focus_after_closing_category_input()
+
+    async def _apply_edit(
+        self, planned: CategoryDefinitions, migrate: Callable[[], int] | None
+    ) -> int | None:
+        """Library first, then the definitions.
+
+        ``planned`` is the definitions as they will be once the library
+        agrees; computing it before migrating means nothing can fail after
+        the migration has committed. Returns how many tracks changed, or
+        ``None`` when the migration failed, in which case it changed nothing
+        and the header says so.
+        """
+        changed = 0
+        if migrate is not None:
+            # The prompt counted the track's pending selection without
+            # storing it; the migration reloads the track, so store now or
+            # the selection is lost. A failed store already says why.
+            if not await self._save_current_item_tags():
+                return None
+            self.header_widget.show_transient("Updating library…")
+            try:
+                changed = await self._off_loop(migrate)
+            except Exception as error:
+                # The transaction was rolled back; any error class is a
+                # "nothing happened" for the user, so it is caught broadly
+                # on purpose.
+                self.log.error(f"Library migration failed: {error}")
+                self.header_widget.show_message(
+                    f"Library update failed, nothing changed: {error}"
+                )
+                return None
+            self.log.info(f"Library migration changed {changed} tracks.")
+            self.header_widget.clear_transient()
+        self.definitions = planned
+        self._persist_definitions()
+        return changed
+
+    async def _refresh_tracks(self, changed: int) -> None:
+        """Reload the track's selections; re-fetch the queue if the library changed."""
+        if changed:
+            await self._reload_after_migration()
+        else:
+            await self._load_tags_for_current_item()
+
+    async def on_category_panel_confirmed(
+        self, message: CategoryPanel.Confirmed
+    ) -> None:
+        await message.run()
 
     def on_category_panel_input_opened(
         self, message: CategoryPanel.InputOpened
@@ -290,8 +624,8 @@ class QuickTagApp(App):
         Focus is left alone: the edit that is taking over already has it.
         """
         for panel in self.query(CategoryPanel):
-            if panel is not except_panel and panel.input_active:
-                panel.close_input(refocus=False)
+            if panel is not except_panel and panel.inline_active:
+                panel.close_inline(refocus=False)
         try:
             new_category_input = self._new_category_input()
         except NoMatches:
@@ -362,8 +696,8 @@ class QuickTagApp(App):
             # ScreenStackError, and there is nothing open to close anyway.
             return False
         for panel in self.query(CategoryPanel):
-            if panel.input_active:
-                panel.close_input()
+            if panel.inline_active:
+                panel.close_inline()
                 return True
         try:
             new_category_input = self._new_category_input()
@@ -424,9 +758,17 @@ class QuickTagApp(App):
         # Capture the current playback state before changing items
         was_playing_before = self.playback_widget.is_playing()
 
+        # A y/n prompt was armed on the track that is leaving; nothing binds
+        # its keys once focus moves on, so it is withdrawn. An open input
+        # keeps its text and its focus.
+        for panel in self.query(CategoryPanel):
+            if panel.confirm_active:
+                panel.close_confirm(refocus=False)
+
         # The title changes before the save so that a save failure reported
         # by ``_save_current_item_tags`` is the last thing written to the
         # header rather than being overwritten by the new title.
+        self.header_widget.clear_message()
         self.header_widget.update_header(item)
         if save_current_item_tags:
             await self._save_current_item_tags()
@@ -434,7 +776,7 @@ class QuickTagApp(App):
         await self._load_tags_for_current_item()
         self.log.info(f"Item set to: {item.artist} - {item.title}")
 
-        if self.definitions.categories:
+        if self.definitions.categories and not self._inline_edit_active():
             try:
                 self._selection_list(self.definitions.categories[0]).focus()
             except NoMatches:
@@ -472,6 +814,15 @@ class QuickTagApp(App):
             # Ensure we're paused if we shouldn't be playing
             if self.playback_widget.is_playing():
                 self.playback_widget.pause()
+
+    def _inline_edit_active(self) -> bool:
+        """True while a panel input or the new-category input is open."""
+        if any(panel.input_active for panel in self.query(CategoryPanel)):
+            return True
+        try:
+            return self._new_category_input().active
+        except NoMatches:
+            return False
 
     async def _navigate(self, direction: NavigateDirection) -> bool:
         """Navigates through the items list in the specified direction.
@@ -772,6 +1123,51 @@ class QuickTagApp(App):
             selection_list.select(value)
         selection_list.scroll_to_highlight()
         return adopted_any
+
+    async def _reload_after_migration(self) -> None:
+        """Swap the stale ``Item`` objects for fresh ones and reload the track.
+
+        The items were loaded before the migration; saving one of them would
+        write the old values straight back. Each held track is re-read by id,
+        so the session keeps working through exactly the queue it was launched
+        with, in the same order, whether or not a track still matches the
+        query that found it (it may have been found by the value just
+        deleted). A track deleted from the library meanwhile simply drops out.
+        """
+        if self.item is None:
+            return
+        ids = [item.id for item in self.items]
+        by_id = {
+            item.id: item for item in await self._off_loop(partial(self._fetch, ids))
+        }
+        fresh = [by_id[item_id] for item_id in ids if item_id in by_id]
+        if not fresh:
+            # Every queued track is gone from the library. The stale queue
+            # is kept: saving into it is harmless (the rows no longer exist)
+            # and there is nothing to show instead.
+            self.header_widget.show_message(
+                "None of the queued tracks are in the library any more."
+            )
+            return
+        current_id = self.item.id
+        for index, item in enumerate(fresh):
+            if item.id == current_id:
+                self.current_item_index = index
+                break
+        else:
+            self.current_item_index = min(self.current_item_index, len(fresh) - 1)
+        self.items = fresh
+        self.item = fresh[self.current_item_index]
+        self.header_widget.update_header(self.item)
+        await self._load_tags_for_current_item()
+
+    def _fetch(self, ids: list[int]) -> list[BeetsItem]:
+        """Fetch tracks by id, a few hundred per query, in no particular order."""
+        items: list[BeetsItem] = []
+        for start in range(0, len(ids), _RELOAD_CHUNK):
+            chunk = ids[start : start + _RELOAD_CHUNK]
+            items.extend(self.lib.items(InQuery("id", chunk)))
+        return items
 
     def _adopt_option(self, category_name: str, value: str) -> bool:
         """Add a value found on a track but missing from the definitions.

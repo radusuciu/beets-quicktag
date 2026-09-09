@@ -1,7 +1,19 @@
+from enum import Enum
+
 from textual import events
 from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import SelectionList
+
+
+class EditKind(Enum):
+    """What the user asked to do to a category from its list."""
+
+    ADD_OPTION = "add_option"
+    RENAME_OPTION = "rename_option"
+    REMOVE_OPTION = "remove_option"
+    RENAME_CATEGORY = "rename_category"
+    REMOVE_CATEGORY = "remove_category"
 
 
 class CustomSelectionList(SelectionList):
@@ -9,8 +21,16 @@ class CustomSelectionList(SelectionList):
     A custom SelectionList that handles quick selection via alphanumeric key presses.
     """
 
-    class AddOptionRequested(Message):
-        """The user pressed ``+`` on this list."""
+    class EditRequested(Message):
+        """The user pressed an editing key on this list.
+
+        ``value`` is the highlighted option for the option kinds, else None.
+        """
+
+        def __init__(self, kind: EditKind, value: str | None) -> None:
+            super().__init__()
+            self.kind = kind
+            self.value = value
 
     # SelectionList inherits hidden "scroll_left"/"scroll_right" bindings for
     # Left/Right from ScrollableContainer. They never scroll (OptionList has
@@ -20,12 +40,35 @@ class CustomSelectionList(SelectionList):
     BINDINGS = [
         Binding("left", "app.previous_item", "Previous"),
         Binding("right", "app.next_item", "Next"),
-        # Not alphanumeric, so ``on_key`` below lets it through to the binding.
-        Binding("plus", "request_add_option", "Add option"),
+        # None of these is alphanumeric, so ``on_key`` below lets them through.
+        Binding("plus", f"request_edit('{EditKind.ADD_OPTION.value}')", "Add option"),
+        Binding(
+            "f2", f"request_edit('{EditKind.RENAME_OPTION.value}')", "Rename option"
+        ),
+        Binding(
+            "delete", f"request_edit('{EditKind.REMOVE_OPTION.value}')", "Delete option"
+        ),
+        Binding(
+            "ctrl+r",
+            f"request_edit('{EditKind.RENAME_CATEGORY.value}')",
+            "Rename category",
+        ),
+        Binding(
+            "ctrl+d",
+            f"request_edit('{EditKind.REMOVE_CATEGORY.value}')",
+            "Delete category",
+        ),
     ]
 
-    def action_request_add_option(self) -> None:
-        self.post_message(self.AddOptionRequested())
+    def action_request_edit(self, kind_name: str) -> None:
+        kind = EditKind(kind_name)
+        if kind in (EditKind.RENAME_OPTION, EditKind.REMOVE_OPTION):
+            if self.highlighted is None:
+                return
+            value = self.get_option_at_index(self.highlighted).value
+            self.post_message(self.EditRequested(kind, str(value)))
+            return
+        self.post_message(self.EditRequested(kind, None))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

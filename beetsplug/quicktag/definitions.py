@@ -9,7 +9,7 @@ with a message suitable for showing directly to the user.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Self
 
 from beets.dbcore.types import String
@@ -26,6 +26,19 @@ RESERVED_NAMES = frozenset({"comments"})
 # lists, ...) are kept in step with companion fields such as ``artists_ids``
 # by the importer, so editing one of them alone would misalign the pair.
 SUPPORTED_LIST_FIELDS = frozenset({"genres"})
+
+
+def find_case_insensitive(values: Sequence[str], needle: str) -> int | None:
+    """Index of the first entry equal to ``needle`` ignoring case, or ``None``.
+
+    The one rule for "the same token" everywhere: category names, option
+    values and the values stored on tracks.
+    """
+    folded = needle.strip().casefold()
+    for index, value in enumerate(values):
+        if value.casefold() == folded:
+            return index
+    return None
 
 
 class CategoryDefinitions:
@@ -52,8 +65,14 @@ class CategoryDefinitions:
         the defined ``happy``), or ``None`` when nothing matches.
         """
         options = self._require_category(category)
-        index = self._find_case_insensitive(options, value.strip())
+        index = find_case_insensitive(options, value)
         return None if index is None else options[index]
+
+    def copy(self) -> Self:
+        """An independent copy, to plan an edit on before it is applied."""
+        clone = type(self)()
+        clone._categories = self.to_mapping()
+        return clone
 
     # ---- construction from / export to a plain mapping -----------------------
 
@@ -134,6 +153,18 @@ class CategoryDefinitions:
         plugin template fields) and so cannot be written or deleted."""
         return name in Item._getters()
 
+    @classmethod
+    def owns_field(cls, name: str) -> bool:
+        """True when quicktag may rewrite ``name`` across the whole library.
+
+        Flexible attributes and the supported list fields hold quicktag's
+        values. A built-in text field (``album``, ``composer``, ...) is only
+        borrowed: it holds data quicktag did not put there, so its category
+        can be listed and unlisted but the field is never cleared or moved
+        wholesale.
+        """
+        return not cls.is_text_field(name)
+
     @staticmethod
     def list_field_delimiters(name: str) -> tuple[str, ...]:
         """The strings beets splits a stored ``name`` list value on.
@@ -162,14 +193,18 @@ class CategoryDefinitions:
         self._categories[name] = []
         return name
 
-    def rename_category(self, old: str, new: str) -> None:
-        """Rename ``old`` to ``new`` keeping its position and options."""
+    def rename_category(self, old: str, new: str) -> str:
+        """Rename ``old`` to ``new`` keeping its position and options.
+
+        Returns the normalized ``new``.
+        """
         self._require_category(old)
         new = self._validate_new_name(new, current=old, loaded=False)
         self._categories = {
             (new if key == old else key): value
             for key, value in self._categories.items()
         }
+        return new
 
     def remove_category(self, name: str) -> None:
         self._require_category(name)
@@ -184,20 +219,22 @@ class CategoryDefinitions:
         options.append(value)
         return value
 
-    def rename_option(self, category: str, old: str, new: str) -> None:
+    def rename_option(self, category: str, old: str, new: str) -> str:
         """Rename ``old`` to ``new`` in place.
 
         Renaming onto an existing option (case-insensitively) is a merge: the
-        old entry is dropped and the existing entry keeps its position.
+        old entry is dropped and the existing entry keeps its position and
+        spelling. Returns the spelling the option has afterwards.
         """
         options = self._require_category(category)
         index = self._require_option(category, options, old)
         new = self._validate_option_shape(category, new)
-        target = self._find_case_insensitive(options, new)
+        target = find_case_insensitive(options, new)
         if target is not None and target != index:
             del options[index]
-            return
+            return options[target - 1 if target > index else target]
         options[index] = new
+        return new
 
     def remove_option(self, category: str, value: str) -> None:
         options = self._require_category(category)
@@ -220,14 +257,6 @@ class CategoryDefinitions:
                 f"Category '{category}' has no option '{value}'."
             ) from None
 
-    @staticmethod
-    def _find_case_insensitive(values: list[str], needle: str) -> int | None:
-        folded = needle.casefold()
-        for index, value in enumerate(values):
-            if value.casefold() == folded:
-                return index
-        return None
-
     def _validate_new_name(
         self, name: str, *, current: str | None, loaded: bool
     ) -> str:
@@ -247,7 +276,7 @@ class CategoryDefinitions:
         if name in RESERVED_NAMES:
             raise ValueError(f"'{name}' is reserved for the built-in comments field.")
         existing = [key for key in self._categories if key != current]
-        if self._find_case_insensitive(existing, name) is not None:
+        if find_case_insensitive(existing, name) is not None:
             raise ValueError(f"A category named '{name}' already exists.")
         if self.is_computed_field(name):
             raise ValueError(
@@ -283,7 +312,7 @@ class CategoryDefinitions:
 
     def _validate_option(self, category: str, value: str, options: list[str]) -> str:
         value = self._validate_option_shape(category, value)
-        existing_index = self._find_case_insensitive(options, value)
+        existing_index = find_case_insensitive(options, value)
         if existing_index is not None:
             existing_value = options[existing_index]
             raise ValueError(f"Category '{category}' already has '{existing_value}'.")
