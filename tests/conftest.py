@@ -181,16 +181,20 @@ def ffmpeg_available() -> bool:
         return False
 
 
-@pytest.fixture
-def mp3_files(temp_dir: Path) -> dict[str, Path]:
-    """Generate test MP3 files using ffmpeg."""
+@pytest.fixture(scope="session")
+def generated_mp3_files(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """Encode the test MP3s once per session.
+
+    The four sine waves come out byte-identical every time and cost about a
+    third of a second to encode, so they are built once here and ``mp3_files``
+    hands each test its own copies.
+    """
     try:
         subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         pytest.skip("ffmpeg not available - cannot generate test MP3 files")
 
-    fixtures_dir = temp_dir / "fixtures"
-    fixtures_dir.mkdir()
+    fixtures_dir = tmp_path_factory.mktemp("mp3_fixtures")
 
     files = {}
 
@@ -326,6 +330,17 @@ def mp3_files(temp_dir: Path) -> dict[str, Path]:
                 print(f"Warning: Could not add metadata to {file_key}: {e}")
 
     return files
+
+
+@pytest.fixture
+def mp3_files(temp_dir: Path, generated_mp3_files: dict[str, Path]) -> dict[str, Path]:
+    """Per-test copies of the session's MP3s, free to be tagged or truncated."""
+    fixtures_dir = temp_dir / "fixtures"
+    fixtures_dir.mkdir()
+    return {
+        name: Path(shutil.copy(source, fixtures_dir / source.name))
+        for name, source in generated_mp3_files.items()
+    }
 
 
 @pytest.fixture
