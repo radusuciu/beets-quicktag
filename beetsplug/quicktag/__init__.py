@@ -1,28 +1,31 @@
 import optparse
+from pathlib import Path
 
+import confuse
 from beets import ui
 from beets.dbcore.db import Results as BeetsResults
 from beets.library import Library as BeetsLibrary
 from beets.plugins import BeetsPlugin
 
 from .app import QuickTagApp
-from .config import validate_categories
+from .definitions_file import DefinitionsFileError, load_or_seed
+
+DEFAULT_CONFIG: dict[str, object] = {
+    "categories": {},
+    "categories_file": "quicktag_categories.yaml",
+    "autoplay_on_track_change": False,
+    "autoplay_at_launch": False,
+    "autonext_at_track_end": False,
+    "autosave_on_quit": False,
+    "keep_playing_on_track_change_if_playing": True,
+    "keep_audio_device_awake": False,
+}
 
 
 class QuickTagPlugin(BeetsPlugin):
     def __init__(self):
         super().__init__()
-        self.config.add(
-            {
-                "categories": {},
-                "autoplay_on_track_change": False,
-                "autoplay_at_launch": False,
-                "autonext_at_track_end": False,
-                "autosave_on_quit": False,
-                "keep_playing_on_track_change_if_playing": True,
-                "keep_audio_device_awake": False,
-            }
-        )
+        self.config.add(DEFAULT_CONFIG)
 
     def commands(self):
         cmd = ui.Subcommand(
@@ -33,57 +36,92 @@ class QuickTagPlugin(BeetsPlugin):
         cmd.func = self.run_quicktag
         return [cmd]
 
-    def run_quicktag(self, lib: BeetsLibrary, opts: optparse.Values, args):
-        query = ui.decargs(args)
+    def run_quicktag(
+        self, lib: BeetsLibrary, opts: optparse.Values, args: list[str]
+    ) -> None:
+        query = list(args)
         items: BeetsResults = lib.items(query)
 
         if not items:
             ui.print_("No tracks found to tag.")
             return
 
-        categories_config = self.config["categories"].get(dict)
-        autoplay_on_track_change_enabled = self.config["autoplay_on_track_change"].get(
-            bool
+        # Like the bundled plugins' ``tokenfile``: a bare filename lands next
+        # to config.yaml, an absolute path is used as is.
+        definitions_path = Path(
+            self.config["categories_file"].get(confuse.Filename(in_app_dir=True))
         )
-        autoplay_at_launch_enabled = self.config["autoplay_at_launch"].get(bool)
-        autonext_at_track_end_enabled = self.config["autonext_at_track_end"].get(bool)
-        autosave_on_quit_enabled = self.config["autosave_on_quit"].get(bool)
-        keep_playing_on_track_change_if_playing_enabled = self.config[
-            "keep_playing_on_track_change_if_playing"
-        ].get(bool)
-        keep_audio_device_awake_enabled = self.config["keep_audio_device_awake"].get(
-            bool
-        )
+        seed = self.config["categories"].get(dict)
 
-        if not categories_config:
-            ui.print_(
-                "No categories defined in the configuration. "
-                "Please configure the quicktag plugin."
-            )
-            ui.print_("Example configuration:")
-            ui.print_("quicktag:")
-            ui.print_("  categories:")
-            ui.print_("    mood: [happy, sad, energetic, calm]")
-            ui.print_(
-                "    genre_custom: [electronic, ambient, experimental, soundtrack]"
-            )
-            ui.print_(
-                "  (category names must contain only letters, digits, "
-                "underscores and hyphens, and not start with a digit)"
-            )
+        try:
+            definitions, created = load_or_seed(definitions_path, seed)
+        except DefinitionsFileError as error:
+            raise ui.UserError(
+                f"quicktag: cannot read categories file: {error}"
+            ) from error
+        except OSError as error:
+            raise ui.UserError(
+                f"quicktag: cannot write categories file {definitions_path}: {error}"
+            ) from error
+        except ValueError as error:
+            raise ui.UserError(f"quicktag: {error}") from error
+
+        if definitions is None:
+            self._print_no_categories_help(definitions_path)
             return
 
-        categories = validate_categories(categories_config)
+        if created:
+            ui.print_(
+                f"quicktag: created {definitions_path} from the 'categories' "
+                "config section. Categories are now read from that file (and "
+                "edited from the TUI); the config section no longer applies."
+            )
+        if not definitions.categories:
+            # An existing but empty file still wins over the config section;
+            # without a word the user would wonder where their config went.
+            ui.print_(
+                f"quicktag: {definitions_path} defines no categories, so the "
+                "'categories' config section is ignored. Press ctrl+n in the "
+                "TUI to add one, or edit the file."
+            )
+        for warning in definitions.fixed_field_warnings():
+            ui.print_(warning)
 
         app = QuickTagApp(
-            lib,
-            items,
-            categories,
-            autoplay_on_track_change_enabled,
-            autoplay_at_launch_enabled,
-            autonext_at_track_end_enabled,
-            autosave_on_quit_enabled,
-            keep_playing_on_track_change_if_playing_enabled,
-            keep_audio_device_awake_enabled=keep_audio_device_awake_enabled,
+            lib=lib,
+            items=items,
+            definitions=definitions,
+            autoplay_on_track_change_enabled=self.config[
+                "autoplay_on_track_change"
+            ].get(bool),
+            autoplay_at_launch_enabled=self.config["autoplay_at_launch"].get(bool),
+            autonext_at_track_end_enabled=self.config["autonext_at_track_end"].get(
+                bool
+            ),
+            autosave_on_quit_enabled=self.config["autosave_on_quit"].get(bool),
+            keep_playing_on_track_change_if_playing_enabled=self.config[
+                "keep_playing_on_track_change_if_playing"
+            ].get(bool),
+            keep_audio_device_awake_enabled=self.config["keep_audio_device_awake"].get(
+                bool
+            ),
+            definitions_path=definitions_path,
         )
         app.run()
+
+    @staticmethod
+    def _print_no_categories_help(definitions_path: Path) -> None:
+        ui.print_(
+            "No categories defined. Add a 'categories' section to the quicktag "
+            f"plugin config (it is copied to {definitions_path} on first run), "
+            "or create that file directly."
+        )
+        ui.print_("Example configuration:")
+        ui.print_("quicktag:")
+        ui.print_("  categories:")
+        ui.print_("    mood: [happy, sad, energetic, calm]")
+        ui.print_("    genre_custom: [electronic, ambient, experimental, soundtrack]")
+        ui.print_(
+            "  (category names must contain only letters, digits, "
+            "underscores and hyphens, and not start with a digit)"
+        )

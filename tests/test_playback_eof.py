@@ -16,6 +16,7 @@ from beets.library import Item, Library
 from textual.app import App, ComposeResult
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
+from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackWidget
 
 
@@ -219,7 +220,10 @@ def _make_app(lib: Library, items: list[Item], **flags: bool) -> QuickTagApp:
     }
     defaults.update(flags)
     return QuickTagApp(
-        lib=lib, items=items, categories=[("mood", ["a", "b"])], **defaults
+        lib=lib,
+        items=items,
+        definitions=CategoryDefinitions.from_config({"mood": ["a", "b"]}),
+        **defaults,
     )
 
 

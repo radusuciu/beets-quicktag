@@ -1,4 +1,5 @@
 from enum import Enum
+from pathlib import Path
 
 from beets.dbcore.db import Results as BeetsResults
 from beets.library import Item as BeetsItem
@@ -6,17 +7,23 @@ from beets.library import Library as BeetsLibrary
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.content import Content
 from textual.dom import NoMatches
 from textual.widgets import Footer, Input, Static
-from textual.widgets.selection_list import Selection
 
+from .definitions import CategoryDefinitions
+from .definitions_file import write_definitions_file
+from .item_values import read_item_values, write_item_values
+from .widgets.category_panel import CategoryPanel
 from .widgets.custom_selection_list import CustomSelectionList
+from .widgets.inline_input import InlineInput
 from .widgets.input_with_label import InputWithLabel
 from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidget
 
 # Terminal window title whenever nothing is audibly playing.
 FALLBACK_TERMINAL_TITLE = "Beets QuickTag"
+
+CATEGORY_PLACEHOLDER = "New category name, Enter to add, Esc to cancel"
+
 
 # Control characters (C0 plus DEL) in metadata could terminate or extend the
 # OSC escape sequence used to set the terminal title, so they are stripped.
@@ -76,10 +83,16 @@ class HeaderWidget(Vertical):
 
         self._header_text_display.update(header_text_value)
 
+    def show_message(self, text: str) -> None:
+        """Replace the title line with ``text`` until ``update_header`` runs."""
+        self._header_text_display.update(text)
+
 
 class QuickTagApp(App):
     BINDINGS = [
-        Binding("escape", "quit", "Quit", show=True, priority=True),
+        # Escape has its own action so that Textual's built-in ctrl+q, which
+        # maps to ``quit``, keeps quitting even while an inline edit is open.
+        Binding("escape", "cancel_or_quit", "Quit", show=True, priority=True),
         # No priority: the focused widget wins first, so Left/Right move the
         # cursor inside the comments input instead of changing track.
         Binding("left", "previous_item", "Previous", show=True),
@@ -87,6 +100,7 @@ class QuickTagApp(App):
         ("/", "play_pause_current_item", "Play/Pause"),
         ("<", "seek_backward(5)", "Seek -5s"),
         (">", "seek_forward(5)", "Seek +5s"),
+        Binding("ctrl+n", "add_category", "New category"),
         # Hardware media keys, as named by the kitty keyboard protocol. Hidden
         # because the footer would print the raw key names.
         Binding("media_play_pause", "media_play_pause", show=False),
@@ -99,12 +113,8 @@ class QuickTagApp(App):
     Screen {
         align: center middle;
     }
-
-    SelectionList {
-        padding: 1;
-        border: solid $accent;
-        /* width: 80%; */
-        /* height: 80%; */
+    #new-category-input {
+        margin: 0 1;
     }
     """
 
@@ -112,19 +122,21 @@ class QuickTagApp(App):
         self,
         lib: BeetsLibrary,
         items: BeetsResults,
-        categories: list[tuple[str, list[str]]],
+        definitions: CategoryDefinitions,
         autoplay_on_track_change_enabled: bool,
         autoplay_at_launch_enabled: bool,
         autonext_at_track_end_enabled: bool,
         autosave_on_quit_enabled: bool,
         keep_playing_on_track_change_if_playing_enabled: bool,
         keep_audio_device_awake_enabled: bool = False,
+        definitions_path: Path | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.lib = lib
         self.items = items
-        self.categories = categories
+        self.definitions = definitions
+        self.definitions_path = definitions_path
         self.autoplay_on_track_change_enabled = autoplay_on_track_change_enabled
         self.autoplay_at_launch_enabled = autoplay_at_launch_enabled
         self.autonext_at_track_end_enabled = autonext_at_track_end_enabled
@@ -135,6 +147,10 @@ class QuickTagApp(App):
 
         self.current_item_index = 0
         self.item = items[0] if items else None
+        # Stored values the model refuses as options (e.g. they contain a
+        # comma). Kept per category so a save writes them back untouched
+        # instead of deleting them from the track.
+        self._unadoptable_values: dict[str, list[str]] = {}
         self.playback_widget = PlaybackWidget(
             keep_audio_device_awake=keep_audio_device_awake_enabled
         )
@@ -183,20 +199,43 @@ class QuickTagApp(App):
             return
         driver.write(f"\x1b]0;{text}\x07")
 
+    def _selection_list(self, category: str) -> CustomSelectionList:
+        """The list widget for ``category``; raises ``NoMatches``."""
+        return self.query_one(f"#selection-{category}", CustomSelectionList)
+
+    def _panel(self, category: str) -> CategoryPanel:
+        """The panel for ``category``; raises ``NoMatches``."""
+        return self.query_one(f"#panel-{category}", CategoryPanel)
+
+    def _persist_definitions(self) -> None:
+        """Write the definitions file if one is configured.
+
+        A failure is logged and the in-memory change is kept, so the next
+        successful write carries it.
+        """
+        if self.definitions_path is None:
+            return
+        try:
+            write_definitions_file(self.definitions_path, self.definitions)
+        except OSError as error:
+            self.log.error(
+                f"Could not write categories file {self.definitions_path}: {error}"
+            )
+            # The log goes nowhere in a real session, and the user would
+            # otherwise believe the category was saved for next time.
+            self.header_widget.show_message(
+                f"Could not write categories file: {self.definitions_path}"
+            )
+
     def compose(self) -> ComposeResult:
         yield self.header_widget
 
         if self.item:
-            for category_name, options in self.categories:
-                selection_options = [
-                    Selection(Content(option_text), option_idx)
-                    for option_idx, option_text in enumerate(options)
-                ]
-                category_selection_list = CustomSelectionList(
-                    *selection_options, id=f"selection-{category_name}"
+            for category_name in self.definitions.categories:
+                yield CategoryPanel(
+                    category_name, self.definitions.options(category_name)
                 )
-                category_selection_list.border_title = Content(category_name)
-                yield category_selection_list
+            yield InlineInput(id="new-category-input", placeholder=CATEGORY_PLACEHOLDER)
             yield InputWithLabel(input_label="Comments:", id="comments-input")
         else:
             yield Static("No items to tag.")
@@ -221,8 +260,91 @@ class QuickTagApp(App):
             return False
         return True
 
+    def on_category_panel_option_submitted(
+        self, message: CategoryPanel.OptionSubmitted
+    ) -> None:
+        """Enter in a panel's inline input: validate, persist, show, select.
+
+        Typing a new option almost always means the current track should get
+        it, so the new option is selected as well as highlighted.
+        """
+        panel = message.panel
+        try:
+            value = self.definitions.add_option(panel.category, message.value)
+        except ValueError as error:
+            panel.show_error(str(error))
+            return
+        self._persist_definitions()
+        panel.add_option(value, select=True)
+        panel.close_input()
+
+    def on_category_panel_input_opened(
+        self, message: CategoryPanel.InputOpened
+    ) -> None:
+        """Keep at most one inline edit open, so Escape is unambiguous."""
+        self._close_inline_edits(except_panel=message.panel)
+
+    def _close_inline_edits(self, *, except_panel: CategoryPanel | None = None) -> None:
+        """Close every open inline edit except ``except_panel``'s.
+
+        Focus is left alone: the edit that is taking over already has it.
+        """
+        for panel in self.query(CategoryPanel):
+            if panel is not except_panel and panel.input_active:
+                panel.close_input(refocus=False)
+        try:
+            new_category_input = self._new_category_input()
+        except NoMatches:
+            return
+        if new_category_input.active:
+            new_category_input.close()
+
+    def _new_category_input(self) -> InlineInput:
+        return self.query_one("#new-category-input", InlineInput)
+
+    def action_add_category(self) -> None:
+        """ctrl+n: reveal the new-category input above the comments field."""
+        try:
+            new_category_input = self._new_category_input()
+        except NoMatches:
+            return
+        if new_category_input.active:
+            # Already open: re-opening would discard what has been typed.
+            new_category_input.focus()
+            return
+        self._close_inline_edits()
+        new_category_input.open()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the new-category input. Panel inputs never reach here
+        (the panel stops their Submitted), and the comments Input has no id."""
+        if event.input.id != "new-category-input":
+            return
+        event.stop()
+        new_category_input = self._new_category_input()
+        try:
+            name = self.definitions.add_category(event.value)
+        except ValueError as error:
+            new_category_input.show_error(str(error))
+            return
+        panel = CategoryPanel(name, [])
+        await self.mount(panel, before=new_category_input)
+        # The track may already carry values for this field; show them (and
+        # adopt unknown ones) so the first save keeps them instead of
+        # writing an empty selection over them.
+        self._load_category_values(name)
+        self._persist_definitions()
+        new_category_input.close()
+        panel.selection_list.focus()
+
+    async def action_cancel_or_quit(self) -> None:
+        """Escape: cancel an open inline edit if there is one, else quit."""
+        if self._cancel_inline_edit():
+            return
+        await self.action_quit()
+
     async def action_quit(self) -> None:
-        """Action to quit the application."""
+        """Quit (also Textual's ctrl+q), saving first if autosave is on."""
         self.log.info(
             "action_quit called. "
             f"autosave_on_quit_enabled: {self.autosave_on_quit_enabled}"
@@ -231,6 +353,45 @@ class QuickTagApp(App):
             self.log.info("Autosaving tags before quitting.")
             await self._save_current_item_tags()
         self.exit()
+
+    def _cancel_inline_edit(self) -> bool:
+        """Close any open inline input. Returns True if one was open."""
+        if not self.is_running:
+            # No screen is mounted (e.g. action_quit called directly in a
+            # test, outside run_test()); querying would raise
+            # ScreenStackError, and there is nothing open to close anyway.
+            return False
+        for panel in self.query(CategoryPanel):
+            if panel.input_active:
+                panel.close_input()
+                return True
+        try:
+            new_category_input = self._new_category_input()
+        except NoMatches:
+            return False
+        if not new_category_input.active:
+            return False
+        new_category_input.close()
+        self._focus_after_closing_category_input()
+        return True
+
+    def _focus_after_closing_category_input(self) -> None:
+        """Hiding the input drops focus, so hand it to the first list.
+
+        With no categories yet there is no list, and the comments field is
+        the only other place focus can sensibly go.
+        """
+        if self.definitions.categories:
+            try:
+                self._selection_list(self.definitions.categories[0]).focus()
+                return
+            except NoMatches:
+                pass
+        try:
+            comments = self.query_one("#comments-input", InputWithLabel)
+        except NoMatches:
+            return
+        comments.query_one(Input).focus()
 
     async def _load_current_item_for_playback(self) -> None:
         """Load the current item for playback."""
@@ -263,19 +424,19 @@ class QuickTagApp(App):
         # Capture the current playback state before changing items
         was_playing_before = self.playback_widget.is_playing()
 
+        # The title changes before the save so that a save failure reported
+        # by ``_save_current_item_tags`` is the last thing written to the
+        # header rather than being overwritten by the new title.
+        self.header_widget.update_header(item)
         if save_current_item_tags:
             await self._save_current_item_tags()
         self.item = item
-        self.header_widget.update_header(item)
         await self._load_tags_for_current_item()
         self.log.info(f"Item set to: {item.artist} - {item.title}")
 
-        if self.categories:
-            first_category_name, _ = self.categories[0]
+        if self.definitions.categories:
             try:
-                self.query_one(
-                    f"#selection-{first_category_name}", CustomSelectionList
-                ).focus()
+                self._selection_list(self.definitions.categories[0]).focus()
             except NoMatches:
                 pass
 
@@ -333,10 +494,10 @@ class QuickTagApp(App):
             else:
                 # There is nowhere to move to, but the last item's tags would
                 # otherwise never be saved (only moving off an item saves it).
-                await self._save_current_item_tags()
-                self.header_widget._header_text_display.update(
-                    "All items processed. Press Esc to quit."
-                )
+                if await self._save_current_item_tags():
+                    self.header_widget.show_message(
+                        "All items processed. Press Esc to quit."
+                    )
                 return False
         elif direction == NavigateDirection.BACKWARD:
             if self.current_item_index > 0:
@@ -440,22 +601,26 @@ class QuickTagApp(App):
         # would leave the new one paused; auto-advance means keep listening.
         self.playback_widget.play()
 
-    async def _save_current_item_tags(self) -> None:
-        """Saves the tags for the current item based on selections."""
+    async def _save_current_item_tags(self) -> bool:
+        """Save the current item's selections. Returns False on any failure.
+
+        A failure is logged and shown in the header; it never propagates,
+        because the save runs from track changes and quitting, where an
+        exception would tear the app down.
+        """
         if not self.item:
             self.log.warning("_save_current_item_tags: No item to save.")
-            return
+            return True
 
         self.log.info(
             "_save_current_item_tags: Attempting to save tags for "
             f"{self.item.artist} - {self.item.title}"
         )
         changed = False
-        for category_name, options_list in self.categories:
+        ok = True
+        for category_name in self.definitions.categories:
             try:
-                selection_list = self.query_one(
-                    f"#selection-{category_name}", CustomSelectionList
-                )
+                selection_list = self._selection_list(category_name)
             except NoMatches:
                 self.log.error(
                     "Could not find SelectionList for category: "
@@ -463,31 +628,32 @@ class QuickTagApp(App):
                 )
                 continue
 
-            selected_indices_in_list = selection_list.selected
-            selected_values = [options_list[i] for i in selected_indices_in_list]
-
-            current_tag_value = ", ".join(selected_values) if selected_values else None
-            old_value = self.item.get(category_name)
-            self.log.debug(
-                f"Category {category_name} for '{self.item.title}': "
-                f"current_tag_value: '{current_tag_value}', "
-                f"old_value: '{old_value}'"
-            )
-
-            if current_tag_value:
-                if old_value != current_tag_value:
-                    self.log.info(
-                        f"Updating tag {category_name} from '{old_value}' to "
-                        f"'{current_tag_value}' for {self.item.title}"
-                    )
-                    self.item[category_name] = current_tag_value
-                    changed = True
-            elif old_value is not None:
+            selected = set(selection_list.selected)
+            # Definition order, not click order, so the stored string is stable.
+            selected_values = [
+                option
+                for option in self.definitions.options(category_name)
+                if option in selected
+            ]
+            # Values the track carries that could never become options are
+            # not selectable, so they must be re-added here or the write
+            # below would drop them.
+            selected_values.extend(self._unadoptable_values.get(category_name, []))
+            try:
+                written = write_item_values(self.item, category_name, selected_values)
+            except Exception as error:
+                # One field beets refuses must not lose the others' changes.
+                self.log.error(f"Could not update {category_name}: {error}")
+                self.header_widget.show_message(
+                    f"Could not update '{category_name}': {error}"
+                )
+                ok = False
+                continue
+            if written:
                 self.log.info(
-                    f"Removing tag {category_name} (was '{old_value}') "
+                    f"Updating {category_name} to {selected_values!r} "
                     f"for {self.item.title}"
                 )
-                del self.item[category_name]
                 changed = True
 
         # Save comments using InputWithLabel
@@ -523,15 +689,21 @@ class QuickTagApp(App):
                 self.log.info(
                     f"Successfully stored item: {self.item.artist} - {self.item.title}"
                 )
-            except Exception as e:
+            except Exception as error:
                 self.log.error(
-                    f"Error storing item {self.item.artist} - {self.item.title}: {e}"
+                    f"Error storing item {self.item.artist} - {self.item.title}: "
+                    f"{error}"
                 )
+                self.header_widget.show_message(
+                    f"Could not save {self.item.artist} - {self.item.title}: {error}"
+                )
+                return False
         else:
             self.log.info(
                 f"No changes detected for '{self.item.artist} - "
                 f"{self.item.title}'. Nothing to store."
             )
+        return ok
 
     async def _load_tags_for_current_item(self) -> None:
         """Loads the tags for the current item into the selection lists."""
@@ -539,38 +711,13 @@ class QuickTagApp(App):
         if not self.item:
             return
 
-        for category_name, options_list in self.categories:
-            try:
-                selection_list = self.query_one(
-                    f"#selection-{category_name}", CustomSelectionList
-                )
-            except NoMatches:
-                self.log.error(
-                    "Could not find SelectionList for category: "
-                    f"{category_name} during load."
-                )
-                continue
-
-            selection_list.deselect_all()
-
-            current_tag_string = self.item.get(category_name)
-            if not current_tag_string:
-                continue
-
-            tagged_values_for_category = {
-                val.strip() for val in current_tag_string.split(",")
-            }
-
-            newly_selected_indices_in_list = []
-            for i, option_text_in_list in enumerate(options_list):
-                if option_text_in_list in tagged_values_for_category:
-                    newly_selected_indices_in_list.append(i)
-
-            if newly_selected_indices_in_list:
-                for index_to_select in newly_selected_indices_in_list:
-                    selection_list.select(index_to_select)
-
-            selection_list.scroll_to_highlight()
+        self._unadoptable_values = {}
+        adopted_any = False
+        for category_name in self.definitions.categories:
+            adopted_any = self._load_category_values(category_name) or adopted_any
+        if adopted_any:
+            # Once per track, not once per adopted value.
+            self._persist_definitions()
 
         # Load comments using InputWithLabel
         try:
@@ -583,3 +730,67 @@ class QuickTagApp(App):
             comments_widget.value = current_comments
         except NoMatches:
             self.log.error("Could not find comments input for loading.")
+
+    def _load_category_values(self, category_name: str) -> bool:
+        """Select the current track's values for ``category_name`` in its list.
+
+        A value that is not an option yet is adopted as one, except on a
+        built-in text field such as ``album``, where that would append every
+        distinct value in the library to the file. Values that cannot become
+        options are remembered so a save writes them back untouched.
+
+        Returns ``True`` when the definitions changed; persisting them is
+        the caller's job.
+        """
+        try:
+            selection_list = self._selection_list(category_name)
+        except NoMatches:
+            self.log.error(
+                "Could not find SelectionList for category: "
+                f"{category_name} during load."
+            )
+            return False
+
+        selection_list.deselect_all()
+        self._unadoptable_values.pop(category_name, None)
+        known_options = set(self.definitions.options(category_name))
+        adopt = not CategoryDefinitions.is_text_field(category_name)
+        adopted_any = False
+        for value in read_item_values(self.item, category_name):
+            if value not in known_options:
+                # A value differing only by case is the known option, so
+                # select that one rather than adopting a near-duplicate.
+                existing = self.definitions.find_option(category_name, value)
+                if existing is not None:
+                    selection_list.select(existing)
+                    continue
+                if not adopt or not self._adopt_option(category_name, value):
+                    self._unadoptable_values.setdefault(category_name, []).append(value)
+                    continue
+                known_options.add(value)
+                adopted_any = True
+            selection_list.select(value)
+        selection_list.scroll_to_highlight()
+        return adopted_any
+
+    def _adopt_option(self, category_name: str, value: str) -> bool:
+        """Add a value found on a track but missing from the definitions.
+
+        Keeps the definitions a faithful mirror of the library so the value is
+        not silently dropped on the next save. Returns ``False`` when the model
+        refuses it (e.g. it differs from an existing option only by case).
+        The definitions file is not written here; see
+        :meth:`_load_tags_for_current_item`.
+        """
+        try:
+            self.definitions.add_option(category_name, value)
+        except ValueError as error:
+            self.log.warning(
+                f"Not adopting {value!r} into category {category_name}: {error}"
+            )
+            return False
+        try:
+            self._panel(category_name).add_option(value, select=False)
+        except NoMatches:
+            pass
+        return True

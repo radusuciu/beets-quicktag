@@ -1,5 +1,6 @@
 from textual import events
 from textual.binding import Binding
+from textual.message import Message
 from textual.widgets import SelectionList
 
 
@@ -7,6 +8,9 @@ class CustomSelectionList(SelectionList):
     """
     A custom SelectionList that handles quick selection via alphanumeric key presses.
     """
+
+    class AddOptionRequested(Message):
+        """The user pressed ``+`` on this list."""
 
     # SelectionList inherits hidden "scroll_left"/"scroll_right" bindings for
     # Left/Right from ScrollableContainer. They never scroll (OptionList has
@@ -16,7 +20,12 @@ class CustomSelectionList(SelectionList):
     BINDINGS = [
         Binding("left", "app.previous_item", "Previous"),
         Binding("right", "app.next_item", "Next"),
+        # Not alphanumeric, so ``on_key`` below lets it through to the binding.
+        Binding("plus", "request_add_option", "Add option"),
     ]
+
+    def action_request_add_option(self) -> None:
+        self.post_message(self.AddOptionRequested())
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
