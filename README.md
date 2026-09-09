@@ -6,7 +6,7 @@
 
 A [beets](https://beets.io/) plugin for tagging tracks with your own categories, as fast as possible. I wrote it to sort my library for DJing. Until 1.0 it may not be stable for others, but I'll still look at issues if you find it (hi!).
 
-![beet quicktag playing a track and tagging it from the keyboard](https://raw.githubusercontent.com/radusuciu/beets-quicktag/main/assets/demo.gif)
+![beet quicktag playing a track, tagging it from the keyboard, and adding a new value and a new category](https://raw.githubusercontent.com/radusuciu/beets-quicktag/main/assets/demo.gif)
 
 ## Requirements
 
