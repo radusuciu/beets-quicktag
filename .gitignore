@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# beets writes a migration backup beside the database it upgrades, and the
+# in-memory test library leaves them wherever pytest was run from
+*-before-*.bak
