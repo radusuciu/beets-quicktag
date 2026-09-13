@@ -19,7 +19,7 @@ from textual.message import Message
 from textual.widgets import Input, Static
 from textual.widgets.selection_list import Selection
 
-from .custom_selection_list import CustomSelectionList, EditKind
+from .custom_selection_list import CustomSelectionList, EditKind, EditRequested
 from .inline_input import InlineInput
 
 OPTION_PLACEHOLDER = "New option, Enter to add, Esc to cancel"
@@ -284,9 +284,7 @@ class CategoryPanel(Vertical):
 
     # ---- messages ----------------------------------------------------------------
 
-    def on_custom_selection_list_edit_requested(
-        self, message: CustomSelectionList.EditRequested
-    ) -> None:
+    def on_edit_requested(self, message: EditRequested) -> None:
         message.stop()
         if message.kind is EditKind.ADD_OPTION:
             self.open_input()
