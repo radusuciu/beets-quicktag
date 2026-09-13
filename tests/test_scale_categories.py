@@ -11,6 +11,7 @@ from beetsplug.quicktag.definitions import Scale
 from beetsplug.quicktag.definitions_file import read_definitions_file
 from beetsplug.quicktag.widgets.category_panel import (
     CategoryPanel,
+    ConfirmPrompt,
     ScalePanel,
 )
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
@@ -18,6 +19,7 @@ from beetsplug.quicktag.widgets.scale_picker import ScalePicker
 from conftest import (
     item_id,
     make_app,
+    rendered_text,
     settle,
     stored_item,
     wait_for_footer_keys,
@@ -208,3 +210,83 @@ class TestScaleInTheApp:
             "energy": "1..5",
             "mood": [],
         }
+
+
+class TestRenameAndDeleteScale:
+    @pytest.mark.asyncio
+    async def test_rename_moves_values_and_rebuilds_the_panel(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        items = list(temp_beets_library.items())
+        items[1]["energy"] = "3"
+        items[1].store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"energy": "1..5"}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("5", "ctrl+r")
+            await settle(app, pilot)
+            await pilot.press("ctrl+u", *"power", "enter")
+            await settle(app, pilot)
+            prompt = app.query_one(ConfirmPrompt)
+            assert "on 2 tracks" in rendered_text(prompt)
+            await pilot.press("y")
+            await settle(app, pilot)
+            assert [p.category for p in app.query(CategoryPanel)] == ["power"]
+            panel = app.query_one("#panel-power", ScalePanel)
+            assert panel.scale == Scale(1, 5)
+            assert panel.picker.value == 5
+            assert app.focused is panel.picker
+            current = item_id(app.item)
+        assert stored_item(temp_beets_library, current).get("power") == "5"
+        assert stored_item(temp_beets_library, item_id(items[1])).get("power") == "3"
+        assert read_definitions_file(path).scale("power") == Scale(1, 5)
+
+    @pytest.mark.asyncio
+    async def test_delete_clears_values_and_removes_the_panel(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        item = first_item(temp_beets_library)
+        item["energy"] = "2"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"energy": "1..5", "mood": ["a"]}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+d")
+            await settle(app, pilot)
+            prompt = app.query_one("#confirm-energy", ConfirmPrompt)
+            assert "from 1 tracks" in rendered_text(prompt)
+            await pilot.press("y")
+            await settle(app, pilot)
+            assert [p.category for p in app.query(CategoryPanel)] == ["mood"]
+            assert app.focused is app.query_one("#selection-mood", CustomSelectionList)
+            current = item_id(app.item)
+        stored = stored_item(temp_beets_library, current)
+        assert "energy" not in stored.keys(with_album=False)
+        assert read_definitions_file(path).categories == ["mood"]
+
+    @pytest.mark.asyncio
+    async def test_delete_prompt_counts_the_unsaved_pick(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"energy": "1..5"})
+        async with app.run_test() as pilot:
+            await pilot.press("3", "ctrl+d")
+            await settle(app, pilot)
+            assert "from 1 tracks" in rendered_text(app.query_one(ConfirmPrompt))
+            await pilot.press("n")
+            await settle(app, pilot)
+            assert app.query_one(ScalePicker).value == 3
+
+    @pytest.mark.asyncio
+    async def test_rename_onto_a_built_in_field_shows_the_error(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"energy": "1..5"})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+r")
+            await settle(app, pilot)
+            await pilot.press("ctrl+u", *"genres", "enter")
+            await settle(app, pilot)
+            panel = app.query_one("#panel-energy", ScalePanel)
+            assert panel.input_active
+            assert "built-in beets field" in panel.input.placeholder
