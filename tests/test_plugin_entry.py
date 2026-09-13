@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import confuse
 import pytest
 import yaml
+from beets.dbcore import types
 from beets.library import Library
 from beets.ui import UserError
 
@@ -242,3 +243,41 @@ class TestSortOptions:
         definitions = app_class.call_args.kwargs["definitions"]
         assert definitions.sort_options is False
         assert definitions.options("mood") == ["sad", "happy"]
+
+
+class TestItemTypes:
+    def test_scales_from_the_file_are_null_integers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "quicktag_categories.yaml").write_text(
+            yaml.safe_dump({"mood": ["happy"], "energy": "1..5", "rating": "0..10"}),
+            encoding="utf-8",
+        )
+        plugin = make_plugin(tmp_path, monkeypatch)
+        assert set(plugin.item_types) == {"energy", "rating"}
+        assert all(
+            isinstance(field_type, types.NullInteger)
+            for field_type in plugin.item_types.values()
+        )
+
+    def test_seed_config_counts_when_the_file_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plugin = make_plugin(tmp_path, monkeypatch, categories={"energy": "1..5"})
+        assert set(plugin.item_types) == {"energy"}
+        assert not (tmp_path / "quicktag_categories.yaml").exists()
+
+    def test_no_scales_means_no_types(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plugin = make_plugin(tmp_path, monkeypatch, categories={"mood": ["happy"]})
+        assert plugin.item_types == {}
+
+    def test_broken_file_yields_no_types_and_no_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "quicktag_categories.yaml").write_text(
+            "rating: 1..99\n", encoding="utf-8"
+        )
+        plugin = make_plugin(tmp_path, monkeypatch)
+        assert plugin.item_types == {}

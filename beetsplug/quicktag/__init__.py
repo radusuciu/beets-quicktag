@@ -3,12 +3,14 @@ from pathlib import Path
 
 import confuse
 from beets import ui
+from beets.dbcore import types
 from beets.dbcore.db import Results as BeetsResults
 from beets.library import Library as BeetsLibrary
 from beets.plugins import BeetsPlugin
 
 from .app import QuickTagApp
-from .definitions_file import DefinitionsFileError, load_or_seed
+from .definitions import CategoryDefinitions
+from .definitions_file import DefinitionsFileError, load_or_seed, read_definitions_file
 
 DEFAULT_CONFIG: dict[str, object] = {
     "categories": {},
@@ -27,6 +29,40 @@ class QuickTagPlugin(BeetsPlugin):
     def __init__(self):
         super().__init__()
         self.config.add(DEFAULT_CONFIG)
+
+    @property
+    def item_types(self) -> dict[str, types.Type]:
+        """Every scale category as a nullable integer field.
+
+        beets reads this once, lazily, for every command, so ``beet ls
+        energy:4..5`` is a numeric range and ``-s energy-`` a numeric sort
+        library-wide. The file is read here without seeding it, and any
+        problem is ignored: ``beet quicktag`` reports it properly, and no
+        other command should fail because of it. ``NullInteger`` because an
+        unset value must format as nothing, not as ``0``.
+        """
+        try:
+            path = self._definitions_path()
+            if path.exists():
+                definitions = read_definitions_file(path)
+            else:
+                definitions = CategoryDefinitions.from_config(
+                    self.config["categories"].get(dict)
+                )
+        except Exception:
+            return {}
+        return {
+            name: types.NullInteger()
+            for name in definitions.categories
+            if definitions.is_scale(name)
+        }
+
+    def _definitions_path(self) -> Path:
+        # Like the bundled plugins' ``tokenfile``: a bare filename lands next
+        # to config.yaml, an absolute path is used as is.
+        return Path(
+            self.config["categories_file"].get(confuse.Filename(in_app_dir=True))
+        )
 
     def commands(self):
         cmd = ui.Subcommand(
@@ -47,11 +83,7 @@ class QuickTagPlugin(BeetsPlugin):
             ui.print_("No tracks found to tag.")
             return
 
-        # Like the bundled plugins' ``tokenfile``: a bare filename lands next
-        # to config.yaml, an absolute path is used as is.
-        definitions_path = Path(
-            self.config["categories_file"].get(confuse.Filename(in_app_dir=True))
-        )
+        definitions_path = self._definitions_path()
         seed = self.config["categories"].get(dict)
 
         try:
@@ -126,7 +158,9 @@ class QuickTagPlugin(BeetsPlugin):
         ui.print_("  categories:")
         ui.print_("    mood: [happy, sad, energetic, calm]")
         ui.print_("    genre_custom: [electronic, ambient, experimental, soundtrack]")
+        ui.print_("    energy: 1..5")
         ui.print_(
             "  (category names must contain only letters, digits, "
-            "underscores and hyphens, and not start with a digit)"
+            "underscores and hyphens, and not start with a digit; a value of "
+            "the form low..high makes a one-number scale)"
         )
