@@ -401,9 +401,44 @@ def mp3_files(temp_dir: Path, generated_mp3_files: dict[str, Path]) -> dict[str,
     }
 
 
+@pytest.fixture(scope="session")
+def migrated_library_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """An empty, fully migrated library database, built once per session.
+
+    Opening a brand-new library runs every beets schema migration, and each
+    one commits and writes a backup file next to the database. That is about
+    half a second per library on Linux and several seconds on the Windows CI
+    runner, so the library fixtures copy this file instead of migrating a
+    fresh one for every test. Opening the copy runs no migrations.
+    """
+    path = tmp_path_factory.mktemp("library_template") / "library.db"
+    Library(str(path))._close()
+    return path
+
+
+def open_library_copy(migrated_library_db: Path, path: Path) -> Library:
+    """Open a fresh copy of the session's migrated database at ``path``."""
+    shutil.copy(migrated_library_db, path)
+    return Library(str(path))
+
+
+@pytest.fixture
+def empty_library(
+    tmp_path: Path, migrated_library_db: Path
+) -> Generator[Library, None, None]:
+    """An empty scratch library. ``store()`` never touches audio files.
+
+    The library is closed on teardown so its sqlite file can be deleted along
+    with ``tmp_path``; Windows refuses to remove a file that is still open.
+    """
+    lib = open_library_copy(migrated_library_db, tmp_path / "library.db")
+    yield lib
+    lib._close()
+
+
 @pytest.fixture
 def temp_beets_library(
-    temp_dir: Path, mp3_files: dict[str, Path]
+    temp_dir: Path, mp3_files: dict[str, Path], migrated_library_db: Path
 ) -> Generator[Library, None, None]:
     """Create a temporary beets library with test MP3 files.
 
@@ -422,8 +457,7 @@ def temp_beets_library(
             shutil.copy(path, dest)
             copied_files[name] = dest
 
-    # Create beets library
-    lib = Library(str(library_db))
+    lib = open_library_copy(migrated_library_db, library_db)
 
     # Import files into library
     for name, path in copied_files.items():

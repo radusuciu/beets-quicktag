@@ -1,8 +1,7 @@
 """Library-wide migrations for renamed and deleted options and categories."""
 
 import uuid
-from collections.abc import Generator, Iterable, Sequence
-from pathlib import Path
+from collections.abc import Iterable, Sequence
 
 import pytest
 from beets.dbcore.db import Results
@@ -21,11 +20,8 @@ from conftest import LIST_FIELD, item_id, needs_list_field, stored_item
 
 
 @pytest.fixture
-def lib(tmp_path: Path) -> Generator[Library, None, None]:
-    """An empty scratch library. ``store()`` never touches audio files."""
-    library = Library(str(tmp_path / "library.db"))
-    yield library
-    library._close()
+def lib(empty_library: Library) -> Library:
+    return empty_library
 
 
 def add_track(lib: Library, **fields: object) -> int:

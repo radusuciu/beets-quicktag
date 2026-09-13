@@ -1,7 +1,5 @@
 """Reading and writing a category's values on a beets Item."""
 
-from pathlib import Path
-
 import pytest
 from beets.library import Album, Item, Library
 
@@ -108,11 +106,8 @@ class TestAlbumFallback:
     the track."""
 
     @pytest.fixture
-    def item_in_album(self, tmp_path: Path) -> Item:
-        # Not ``:memory:``: opening a library runs the beets migrations, and
-        # each one writes a backup named after the database. Windows has no
-        # filename that can hold the colons.
-        lib = Library(str(tmp_path / "library.db"))
+    def item_in_album(self, empty_library: Library) -> Item:
+        lib = empty_library
         album = Album(lib, album="A")
         album.add(lib)
         item = Item(title="t", album="A", path=b"/t.mp3")
