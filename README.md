@@ -101,18 +101,18 @@ Category names may only contain letters, digits, underscores and hyphens, cannot
 
 ### Common Tasks
 
-Day-to-day commands are collected in a `justfile` and run with [just](https://github.com/casey/just), which is installed as a dev dependency when you run `uv sync`.
+Day-to-day commands are collected in a `justfile` and run with [just](https://github.com/casey/just). It is installed into the project's virtual environment as a dev dependency by `uv sync`, so activate the environment first (`source .venv/bin/activate`) or install `just` on your system with your package manager.
 
 ```bash
-uv run just            # list available recipes
-uv run just lint       # lint and check formatting (same as CI)
-uv run just fix        # fix lint errors and reformat
-uv run just typecheck  # type check with ty
-uv run just test       # run the test suite
-uv run just check      # lint, type check and test in one go
+just            # list available recipes
+just lint       # lint and check formatting (same as CI)
+just fix        # fix lint errors and reformat
+just typecheck  # type check with ty
+just test       # run the test suite
+just check      # lint, type check and test in one go
 ```
 
-Anything after `just test` is passed straight to pytest, so `uv run just test -k playback` runs only the playback tests. The tests run with `BEETSDIR` pointing at an empty temporary directory so your own beets config and library are never read or written.
+Anything after `just test` is passed straight to pytest, so `just test -k playback` runs only the playback tests. The tests run with `BEETSDIR` pointing at an empty temporary directory so your own beets config and library are never read or written.
 
 If you prefer to skip `just`, the underlying commands are:
 
