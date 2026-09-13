@@ -1,4 +1,5 @@
-"""One category: its selection list plus a one-line inline area beneath it.
+"""One category: its value widget (a selection list, or a picker for a
+scale) plus a one-line inline area beneath it.
 
 The inline area is either an ``Input`` (add an option, rename an option,
 rename the category) or a ``ConfirmPrompt`` (a y/n question before a
@@ -19,8 +20,10 @@ from textual.message import Message
 from textual.widgets import Input, Static
 from textual.widgets.selection_list import Selection
 
+from ..definitions import Scale
 from .custom_selection_list import CustomSelectionList, EditKind, EditRequested
 from .inline_input import InlineInput
+from .scale_picker import ScalePicker
 
 OPTION_PLACEHOLDER = "New option, Enter to add, Esc to cancel"
 RENAME_OPTION_PLACEHOLDER = "New name, Enter to rename, Esc to cancel"
@@ -67,6 +70,9 @@ class CategoryPanel(Vertical):
     CategoryPanel > CustomSelectionList:focus {
         border: none;
         padding: 0;
+    }
+    CategoryPanel > ScalePicker {
+        padding: 0 1;
     }
     CategoryPanel > InlineInput,
     CategoryPanel > ConfirmPrompt {
@@ -137,14 +143,22 @@ class CategoryPanel(Vertical):
         self._confirm_run: Callable[[], Awaitable[None]] | None = None
 
     def compose(self) -> ComposeResult:
-        yield CustomSelectionList(
-            *(Selection(Content(option), option) for option in self._initial_options),
-            id=f"selection-{self.category}",
-        )
+        yield from self.compose_body()
         yield InlineInput(id=f"input-{self.category}", placeholder=OPTION_PLACEHOLDER)
         prompt = ConfirmPrompt(id=f"confirm-{self.category}", markup=False)
         prompt.display = False
         yield prompt
+
+    def compose_body(self) -> ComposeResult:
+        """The widget that holds the track's value for this category."""
+        yield CustomSelectionList(
+            *(Selection(Content(option), option) for option in self._initial_options),
+            id=f"selection-{self.category}",
+        )
+
+    def focus_body(self) -> None:
+        """Give focus to the value widget."""
+        self.selection_list.focus()
 
     # ---- children ------------------------------------------------------------
 
@@ -202,7 +216,7 @@ class CategoryPanel(Vertical):
         self.edit_kind = EditKind.ADD_OPTION
         self.edit_target = None
         if refocus:
-            self.selection_list.focus()
+            self.focus_body()
 
     def show_error(self, message: str) -> None:
         """Show ``message`` on the input line and keep it open for a retry."""
@@ -228,7 +242,7 @@ class CategoryPanel(Vertical):
         prompt.display = False
         prompt.update("")
         if refocus:
-            self.selection_list.focus()
+            self.focus_body()
 
     def close_inline(self, *, refocus: bool = True) -> None:
         """Close whichever inline line is open, if any."""
@@ -305,3 +319,26 @@ class CategoryPanel(Vertical):
         self.close_confirm()
         if message.confirmed and run is not None:
             self.post_message(self.Confirmed(self, run))
+
+
+class ScalePanel(CategoryPanel):
+    """A category whose value is one number: a picker instead of a list.
+
+    Option editing never reaches it (the picker has no add, rename or
+    delete-option key); renaming and deleting the category work as on a
+    list panel through the inherited inline input and confirm prompt.
+    """
+
+    def __init__(self, category: str, scale: Scale) -> None:
+        super().__init__(category, [])
+        self.scale = scale
+
+    def compose_body(self) -> ComposeResult:
+        yield ScalePicker(self.scale, id=f"scale-{self.category}")
+
+    @property
+    def picker(self) -> ScalePicker:
+        return self.query_one(ScalePicker)
+
+    def focus_body(self) -> None:
+        self.picker.focus()
