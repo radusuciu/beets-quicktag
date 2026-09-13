@@ -1,6 +1,6 @@
 [project]
 name = "beets-quicktag"
-version = "0.1.0"
+version = "0.2.0"
 description = "A beets plugin for quickly tagging tracks with customizable attributes"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -130,6 +130,7 @@ split_commits = false
 commit_parsers = [
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug Fixes" },
+    { message = "^docs: update changelog for", skip = true },
     { message = "^doc", group = "Documentation" },
     { message = "^perf", group = "Performance" },
     { message = "^refactor", group = "Refactor" },
