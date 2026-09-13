@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from beetsplug.quicktag.definitions import CategoryDefinitions
+from beetsplug.quicktag.definitions import CategoryDefinitions, Scale
 from beetsplug.quicktag.definitions_file import (
     DefinitionsFileError,
     load_or_seed,
@@ -185,3 +185,26 @@ class TestSortOptions:
         assert definitions.options("mood") == ["happy", "sad"]
         assert created is True
         assert read_definitions_file(path).options("mood") == ["happy", "sad"]
+
+
+class TestScalesInFile:
+    def test_scale_round_trips_as_a_range_string(self, tmp_path: Path) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        write_definitions_file(
+            path, CategoryDefinitions.from_config({"energy": "1..5", "mood": ["a"]})
+        )
+        assert "energy: 1..5\n" in path.read_text(encoding="utf-8")
+        loaded = read_definitions_file(path)
+        assert loaded.scale("energy") == Scale(1, 5)
+        assert loaded.options("mood") == ["a"]
+
+    def test_hand_written_range_is_read_as_a_scale(self, tmp_path: Path) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        path.write_text("rating: 0..10\n", encoding="utf-8")
+        assert read_definitions_file(path).scale("rating") == Scale(0, 10)
+
+    def test_bad_range_reports_the_path(self, tmp_path: Path) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        path.write_text("rating: 1..99\n", encoding="utf-8")
+        with pytest.raises(DefinitionsFileError, match="Category 'rating'"):
+            read_definitions_file(path)

@@ -8,8 +8,10 @@ from beets.library import Album, Item, Library
 from beetsplug.quicktag.item_values import (
     encode_values,
     read_item_values,
+    read_scale_value,
     split_value,
     write_item_values,
+    write_scale_value,
 )
 from conftest import LIST_FIELD, item_id, needs_list_field, stored_item
 
@@ -139,3 +141,50 @@ class TestAlbumFallback:
         assert read_item_values(item_in_album, "mood") == ["light"]
         assert write_item_values(item_in_album, "mood", []) is True
         assert item_in_album.get("mood", with_album=False) is None
+
+
+class TestScaleValues:
+    def test_unset_reads_as_none(self, temp_beets_library: Library) -> None:
+        item = next(iter(temp_beets_library.items()))
+        assert read_scale_value(item, "energy") is None
+
+    def test_write_then_read(self, temp_beets_library: Library) -> None:
+        item = next(iter(temp_beets_library.items()))
+        assert write_scale_value(item, "energy", 4) is True
+        item.store()
+        stored = stored_item(temp_beets_library, item_id(item))
+        assert stored.get("energy") == "4"
+        assert read_scale_value(stored, "energy") == "4"
+
+    def test_same_value_is_a_no_op(self, temp_beets_library: Library) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["energy"] = "4"
+        assert write_scale_value(item, "energy", 4) is False
+
+    def test_none_deletes_the_attribute(self, temp_beets_library: Library) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["energy"] = "4"
+        item.store()
+        assert write_scale_value(item, "energy", None) is True
+        item.store()
+        stored = stored_item(temp_beets_library, item_id(item))
+        assert "energy" not in stored.keys(with_album=False)
+
+    def test_none_on_unset_is_a_no_op(self, temp_beets_library: Library) -> None:
+        item = next(iter(temp_beets_library.items()))
+        assert write_scale_value(item, "energy", None) is False
+
+    def test_album_value_is_not_the_tracks(self, temp_beets_library: Library) -> None:
+        item = next(iter(temp_beets_library.items()))
+        album = temp_beets_library.add_album([item])
+        album["energy"] = "5"
+        album.store(inherit=False)
+        stored = stored_item(temp_beets_library, item_id(item))
+        assert read_scale_value(stored, "energy") is None
+
+    def test_blank_and_bytes(self, temp_beets_library: Library) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["energy"] = "  "
+        assert read_scale_value(item, "energy") is None
+        item["energy"] = b" 3 "
+        assert read_scale_value(item, "energy") == "3"
