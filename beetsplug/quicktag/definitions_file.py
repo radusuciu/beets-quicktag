@@ -28,7 +28,9 @@ class DefinitionsFileError(Exception):
         self.path = path
 
 
-def read_definitions_file(path: Path) -> CategoryDefinitions:
+def read_definitions_file(
+    path: Path, *, sort_options: bool = False
+) -> CategoryDefinitions:
     """Parse ``path``. An empty file means "no categories"."""
     try:
         text = path.read_text(encoding="utf-8")
@@ -45,7 +47,7 @@ def read_definitions_file(path: Path) -> CategoryDefinitions:
             path, "expected a mapping of category name -> list of options."
         )
     try:
-        return CategoryDefinitions.from_config(data)
+        return CategoryDefinitions.from_config(data, sort_options=sort_options)
     except ValueError as error:
         raise DefinitionsFileError(path, str(error)) from error
 
@@ -84,7 +86,7 @@ def write_definitions_file(path: Path, definitions: CategoryDefinitions) -> None
 
 
 def load_or_seed(
-    path: Path, seed: Mapping[object, object] | None
+    path: Path, seed: Mapping[object, object] | None, *, sort_options: bool = False
 ) -> tuple[CategoryDefinitions | None, bool]:
     """Apply the load rules.
 
@@ -97,9 +99,9 @@ def load_or_seed(
     and is never overwritten.
     """
     if path.exists():
-        return read_definitions_file(path), False
+        return read_definitions_file(path, sort_options=sort_options), False
     if not seed:
         return None, False
-    definitions = CategoryDefinitions.from_config(seed)
+    definitions = CategoryDefinitions.from_config(seed, sort_options=sort_options)
     write_definitions_file(path, definitions)
     return definitions, True

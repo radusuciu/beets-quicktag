@@ -46,6 +46,7 @@ def make_app(
     mapping: Mapping[object, object],
     definitions_path: Path | None = None,
     items: list[Item] | None = None,
+    sort_options: bool = False,
     **settings: bool,
 ) -> QuickTagApp:
     """An app over ``lib`` with every playback automation off unless
@@ -61,7 +62,7 @@ def make_app(
     return QuickTagApp(
         lib=lib,
         items=list(lib.items()) if items is None else items,
-        definitions=CategoryDefinitions.from_config(mapping),
+        definitions=CategoryDefinitions.from_config(mapping, sort_options=sort_options),
         definitions_path=definitions_path,
         **flags,
     )

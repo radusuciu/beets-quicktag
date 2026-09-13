@@ -450,3 +450,57 @@ class TestFindCaseInsensitive:
 
     def test_folds_non_ascii(self) -> None:
         assert find_case_insensitive(["CAFÉ"], "café") == 0
+
+
+class TestSortedOptions:
+    """``sort_options=True`` keeps every option list sorted ignoring case.
+
+    Category order is never touched: only the values inside each sort.
+    """
+
+    def test_off_by_default(self) -> None:
+        defs = CategoryDefinitions.from_config({"mood": ["sad", "happy"]})
+        assert defs.options("mood") == ["sad", "happy"]
+
+    def test_from_config_sorts_options_but_not_categories(self) -> None:
+        defs = CategoryDefinitions.from_config(
+            {"vibe": ["Zen", "afro"], "mood": ["sad", "Happy", "calm"]},
+            sort_options=True,
+        )
+        assert defs.categories == ["vibe", "mood"]
+        assert defs.options("vibe") == ["afro", "Zen"]
+        assert defs.options("mood") == ["calm", "Happy", "sad"]
+
+    def test_add_option_inserts_in_sorted_position(self) -> None:
+        defs = CategoryDefinitions(sort_options=True)
+        defs.add_category("mood")
+        defs.add_option("mood", "sad")
+        defs.add_option("mood", "Happy")
+        assert defs.add_option("mood", "  calm ") == "calm"
+        assert defs.options("mood") == ["calm", "Happy", "sad"]
+
+    def test_rename_option_moves_it_to_its_sorted_position(self) -> None:
+        defs = CategoryDefinitions.from_config(
+            {"mood": ["calm", "happy", "sad"]}, sort_options=True
+        )
+        assert defs.rename_option("mood", "calm", "Zen") == "Zen"
+        assert defs.options("mood") == ["happy", "sad", "Zen"]
+
+    def test_rename_option_merge_keeps_the_existing_spelling(self) -> None:
+        defs = CategoryDefinitions.from_config(
+            {"mood": ["calm", "Hip-Hop", "hiphop"]}, sort_options=True
+        )
+        assert defs.rename_option("mood", "hiphop", "hip-hop") == "Hip-Hop"
+        assert defs.options("mood") == ["calm", "Hip-Hop"]
+
+    def test_copy_keeps_sorting(self) -> None:
+        defs = CategoryDefinitions.from_config({"mood": ["sad"]}, sort_options=True)
+        clone = defs.copy()
+        clone.add_option("mood", "happy")
+        assert clone.options("mood") == ["happy", "sad"]
+
+    def test_to_mapping_is_sorted(self) -> None:
+        defs = CategoryDefinitions.from_config(
+            {"mood": ["sad", "happy"]}, sort_options=True
+        )
+        assert defs.to_mapping() == {"mood": ["happy", "sad"]}

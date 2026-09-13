@@ -239,11 +239,30 @@ class CategoryPanel(Vertical):
 
     # ---- options ---------------------------------------------------------------
 
-    def add_option(self, value: str, *, select: bool) -> None:
-        """Append ``value`` to the list, highlight it and optionally select it."""
+    def add_option(self, value: str, *, select: bool, index: int | None = None) -> None:
+        """Add ``value`` to the list, highlight it and optionally select it.
+
+        ``index`` is where it goes; ``None`` appends. Textual's option list
+        cannot insert, so anywhere but the end rebuilds the list, keeping the
+        current selections.
+        """
         selection_list = self.selection_list
-        selection_list.add_option(Selection(Content(value), value))
-        selection_list.highlighted = selection_list.option_count - 1
+        if index is None or index >= selection_list.option_count:
+            selection_list.add_option(Selection(Content(value), value))
+            index = selection_list.option_count - 1
+        else:
+            options = [
+                str(selection_list.get_option_at_index(i).value)
+                for i in range(selection_list.option_count)
+            ]
+            options.insert(index, value)
+            selected = set(selection_list.selected)
+            selection_list.clear_options()
+            selection_list.add_options(
+                Selection(Content(option), option, option in selected)
+                for option in options
+            )
+        selection_list.highlighted = index
         if select:
             selection_list.select(value)
         selection_list.scroll_to_highlight()

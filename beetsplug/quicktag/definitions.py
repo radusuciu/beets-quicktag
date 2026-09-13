@@ -42,10 +42,16 @@ def find_case_insensitive(values: Sequence[str], needle: str) -> int | None:
 
 
 class CategoryDefinitions:
-    """Ordered mapping of category name -> ordered list of option values."""
+    """Ordered mapping of category name -> ordered list of option values.
 
-    def __init__(self) -> None:
+    With ``sort_options`` every option list is kept sorted ignoring case,
+    whatever order it was loaded or edited in; category order is never
+    touched.
+    """
+
+    def __init__(self, *, sort_options: bool = False) -> None:
         self._categories: dict[str, list[str]] = {}
+        self.sort_options = sort_options
 
     # ---- read access -----------------------------------------------------
 
@@ -70,21 +76,23 @@ class CategoryDefinitions:
 
     def copy(self) -> Self:
         """An independent copy, to plan an edit on before it is applied."""
-        clone = type(self)()
+        clone = type(self)(sort_options=self.sort_options)
         clone._categories = self.to_mapping()
         return clone
 
     # ---- construction from / export to a plain mapping -----------------------
 
     @classmethod
-    def from_config(cls, mapping: Mapping[object, object]) -> Self:
+    def from_config(
+        cls, mapping: Mapping[object, object], *, sort_options: bool = False
+    ) -> Self:
         """Build from the YAML-shaped mapping used by the config and the file.
 
         Rules differ from the interactive ``add_*`` methods in one way: a
         category whose name is a fixed beets *text* field is accepted (see
         :meth:`fixed_field_warnings`), because it may already hold data.
         """
-        defs = cls()
+        defs = cls(sort_options=sort_options)
         for raw_name, raw_options in mapping.items():
             if not isinstance(raw_name, str):
                 raise ValueError(
@@ -111,6 +119,7 @@ class CategoryDefinitions:
             options: list[str] = []
             for option in raw_options:
                 options.append(defs._validate_option(name, option, options))
+            defs._sort(options)
             defs._categories[name] = options
         return defs
 
@@ -217,6 +226,7 @@ class CategoryDefinitions:
         options = self._require_category(category)
         value = self._validate_option(category, value, options)
         options.append(value)
+        self._sort(options)
         return value
 
     def rename_option(self, category: str, old: str, new: str) -> str:
@@ -234,6 +244,7 @@ class CategoryDefinitions:
             del options[index]
             return options[target - 1 if target > index else target]
         options[index] = new
+        self._sort(options)
         return new
 
     def remove_option(self, category: str, value: str) -> None:
@@ -241,6 +252,11 @@ class CategoryDefinitions:
         del options[self._require_option(category, options, value)]
 
     # ---- helpers ------------------------------------------------------------
+
+    def _sort(self, options: list[str]) -> None:
+        """Sort ``options`` in place when sorting is on; a no-op otherwise."""
+        if self.sort_options:
+            options.sort(key=str.casefold)
 
     def _require_category(self, category: str) -> list[str]:
         try:
