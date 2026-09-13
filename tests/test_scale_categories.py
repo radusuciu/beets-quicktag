@@ -290,3 +290,55 @@ class TestRenameAndDeleteScale:
             panel = app.query_one("#panel-energy", ScalePanel)
             assert panel.input_active
             assert "built-in beets field" in panel.input.placeholder
+
+
+class TestAddScaleFromTheTui:
+    @pytest.mark.asyncio
+    async def test_name_colon_range_adds_a_scale_panel(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        item = first_item(temp_beets_library)
+        item["energy"] = "3"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(temp_beets_library, {"mood": ["a"]}, path)
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n")
+            app.query_one("#new-category-input", Input).value = "energy: 1..5"
+            await pilot.press("enter")
+            await settle(app, pilot)
+            names = [panel.category for panel in app.query(CategoryPanel)]
+            assert names == ["mood", "energy"]
+            panel = app.query_one("#panel-energy", ScalePanel)
+            assert panel.scale == Scale(1, 5)
+            assert panel.picker.value == 3
+            assert app.focused is panel.picker
+        assert read_definitions_file(path).to_mapping() == {
+            "mood": ["a"],
+            "energy": "1..5",
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("typed", "message_part"),
+        [
+            ("energy: high", "not a scale"),
+            ("energy: 1..99", "0 <= low < high <= 10"),
+            ("genres: 1..5", "built-in beets field"),
+            ("my mood: 1..5", "letters, digits"),
+        ],
+    )
+    async def test_bad_scale_shows_error_and_stays_open(
+        self, temp_beets_library: Library, typed: str, message_part: str
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["a"]})
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n")
+            new_input = app.query_one("#new-category-input", Input)
+            new_input.value = typed
+            await pilot.press("enter")
+            await settle(app, pilot)
+            assert new_input.display is True
+            assert message_part in new_input.placeholder
+            assert app.focused is new_input
+            assert app.definitions.categories == ["mood"]

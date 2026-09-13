@@ -47,7 +47,7 @@ This opens a TUI that plays each track and shows a checklist per category, plus 
 | `+` | Add a value to the focused category (type it, `Enter` to add, `Escape` to cancel) |
 | `F2` | Rename the highlighted value (edit it, `Enter` to apply, `Escape` to cancel) |
 | `Delete` | Delete the highlighted value (lists); clear the value (scales, `Backspace` too) |
-| `Ctrl+N` | Add a category (type its name, `Enter` to add, `Escape` to cancel) |
+| `Ctrl+N` | Add a category (type its name, or `name: 1..5` for a scale; `Enter` to add, `Escape` to cancel) |
 | `Ctrl+R` | Rename the focused category |
 | `Ctrl+D` | Delete the focused category |
 | `Escape` | Cancel an open input or `y/n` prompt, otherwise quit |
@@ -86,7 +86,7 @@ quicktag:
 
 Categories live in a YAML file, `quicktag_categories.yaml` next to your beets `config.yaml` by default. On the first run the file is created from the `categories` section above and a message says so; from then on the file is what counts and the `categories` section is ignored. The file has the same shape as the config section (name → list of values, or name → `low..high` for a scale) and can be edited by hand, or from the TUI with `+`, `F2`, `Delete`, `Ctrl+N`, `Ctrl+R` and `Ctrl+D`. Key order is display order, and so is value order unless `sort_options` is on. If the file cannot be parsed, `beet quicktag` stops and prints the path and the error rather than overwriting it.
 
-Category names may only contain letters, digits, underscores and hyphens, cannot start with a digit, and cannot be `comments`. From the TUI a built-in beets field name is refused, except `genres`; a file or config that already names a built-in text field (for example `album`) is accepted with a warning at startup. Other list-valued fields such as `artists` and `albumtypes` are refused everywhere, because beets keeps them in step with companion fields. Names and values must be unique within their list ignoring case. Values cannot contain commas, and `genres` values cannot contain `; `, which beets uses to separate them. A scale is written `low..high` with `0 <= low < high <= 10`; its name must not be a built-in beets field, `genres` included, and a scale is added by editing the file (`Ctrl+N` adds list categories). Scales are typed as integers for beets, so `beet ls energy:4..5` and `beet ls -s energy-` work as numbers.
+Category names may only contain letters, digits, underscores and hyphens, cannot start with a digit, and cannot be `comments`. From the TUI a built-in beets field name is refused, except `genres`; a file or config that already names a built-in text field (for example `album`) is accepted with a warning at startup. Other list-valued fields such as `artists` and `albumtypes` are refused everywhere, because beets keeps them in step with companion fields. Names and values must be unique within their list ignoring case. Values cannot contain commas, and `genres` values cannot contain `; `, which beets uses to separate them. A scale is written `low..high` with `0 <= low < high <= 10`; its name must not be a built-in beets field, `genres` included. `Ctrl+N` adds a scale when the name is followed by its range, `energy: 1..5`; a scale can also be added by editing the file. Scales are typed as integers for beets, so `beet ls energy:4..5` and `beet ls -s energy-` work as numbers.
 
 | Option | Default | Effect |
 |---|---|---|

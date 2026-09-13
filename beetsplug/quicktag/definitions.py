@@ -282,6 +282,13 @@ class CategoryDefinitions:
         self._categories[name] = []
         return name
 
+    def add_scale(self, name: str, scale: Scale) -> str:
+        """Append a new scale category. Returns the normalized name."""
+        name = self._validate_new_name(name, current=None, loaded=False)
+        self._require_flexible(name)
+        self._categories[name] = scale
+        return name
+
     def rename_category(self, old: str, new: str) -> str:
         """Rename ``old`` to ``new`` keeping its position and options.
 

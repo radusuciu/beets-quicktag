@@ -636,3 +636,18 @@ class TestScaleCategories:
     def test_fixed_field_warnings_skip_scales(self) -> None:
         defs = CategoryDefinitions.from_config({"energy": "1..5", "album": ["x"]})
         assert len(defs.fixed_field_warnings()) == 1
+
+
+class TestAddScale:
+    def test_add_scale_appends_a_scale(self) -> None:
+        defs = CategoryDefinitions.from_config({"mood": ["a"]})
+        assert defs.add_scale(" energy ", Scale(1, 5)) == "energy"
+        assert defs.categories == ["mood", "energy"]
+        assert defs.scale("energy") == Scale(1, 5)
+
+    @pytest.mark.parametrize("name", ["album", "genres", "bpm"])
+    def test_add_scale_refuses_built_in_fields(self, name: str) -> None:
+        defs = CategoryDefinitions()
+        with pytest.raises(ValueError, match="built-in beets field"):
+            defs.add_scale(name, Scale(1, 5))
+        assert defs.categories == []

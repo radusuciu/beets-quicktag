@@ -15,7 +15,7 @@ from textual.dom import NoMatches
 from textual.widgets import Footer, Input, Static
 from textual.worker import WorkerFailed
 
-from .definitions import CategoryDefinitions, find_case_insensitive
+from .definitions import CategoryDefinitions, Scale, find_case_insensitive
 from .definitions_file import write_definitions_file
 from .item_values import (
     read_item_values,
@@ -40,7 +40,9 @@ from .widgets.scale_picker import ScalePicker
 # Terminal window title whenever nothing is audibly playing.
 FALLBACK_TERMINAL_TITLE = "Beets QuickTag"
 
-CATEGORY_PLACEHOLDER = "New category name, Enter to add, Esc to cancel"
+CATEGORY_PLACEHOLDER = (
+    "New category name, or name: 1..5 for a scale; Enter to add, Esc to cancel"
+)
 
 
 # Control characters (C0 plus DEL) in metadata could terminate or extend the
@@ -705,19 +707,35 @@ class QuickTagApp(App):
         event.stop()
         new_category_input = self._new_category_input()
         try:
-            name = self.definitions.add_category(event.value)
+            name = self._add_category_from_input(event.value)
         except ValueError as error:
             new_category_input.show_error(str(error))
             return
-        panel = CategoryPanel(name, [])
+        panel = self._make_panel(name)
         await self.mount(panel, before=new_category_input)
         # The track may already carry values for this field; show them (and
         # adopt unknown ones) so the first save keeps them instead of
         # writing an empty selection over them.
-        self._load_category_values(name)
+        if self.definitions.is_scale(name):
+            self._load_scale_value(name)
+        else:
+            self._load_category_values(name)
         self._persist_definitions()
         new_category_input.close()
         panel.focus_body()
+
+    def _add_category_from_input(self, text: str) -> str:
+        """Add what the new-category input holds and return the normalized
+        name: ``name`` makes a list category, ``name: low..high`` a scale."""
+        name, colon, spec = text.partition(":")
+        if not colon:
+            return self.definitions.add_category(text)
+        scale = Scale.parse(spec)
+        if scale is None:
+            raise ValueError(
+                f"'{spec.strip()}' is not a scale; write low..high, e.g. 1..5."
+            )
+        return self.definitions.add_scale(name, scale)
 
     async def action_cancel_or_quit(self) -> None:
         """Escape: cancel an open inline edit if there is one, else quit."""
