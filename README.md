@@ -111,6 +111,7 @@ uv run pytest
 ```bash
 uv run ruff check .  # Linting
 uv run ruff format . # Formatting
+uv run ty check      # Type checking
 ```
 
 ### Re-recording the Demo

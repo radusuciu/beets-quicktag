@@ -3,11 +3,12 @@
 Every test builds the app against the scratch library from ``conftest.py``.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 from beets.library import Item, Library
-from textual.widgets import Input, Static
+from textual.widgets import Input
 
 from beetsplug.quicktag.definitions_file import read_definitions_file
 from beetsplug.quicktag.widgets.category_panel import CategoryPanel
@@ -15,9 +16,12 @@ from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from conftest import (
     LIST_FIELD,
+    header_text,
+    item_id,
     make_app,
     needs_list_field,
     prompts,
+    stored_item,
     wait_for_footer_keys,
 )
 
@@ -43,7 +47,7 @@ class TestValueBasedSelections:
             lst.select("calm")
             lst.select("happy")
             await app._save_current_item_tags()
-        item = temp_beets_library.get_item(app.item.id)
+        item = stored_item(temp_beets_library, item_id(app.item))
         assert item.get("mood") == "happy, calm"
 
     @pytest.mark.asyncio
@@ -83,8 +87,8 @@ class TestValueBasedSelections:
             lst = app.query_one(f"#selection-{LIST_FIELD}", CustomSelectionList)
             lst.select("Acid")
             await app._save_current_item_tags()
-            item_id = app.item.id
-        item = temp_beets_library.get_item(item_id)
+            current_id = item_id(app.item)
+        item = stored_item(temp_beets_library, current_id)
         assert item[LIST_FIELD] == ["Acid"]
 
         app2 = make_app(temp_beets_library, {LIST_FIELD: ["House", "Acid"]})
@@ -125,7 +129,7 @@ class TestAdoptingUnknownValues:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test():
             await app._save_current_item_tags()
-        assert temp_beets_library.get_item(item.id).get("mood") == "Jazzy"
+        assert stored_item(temp_beets_library, item_id(item)).get("mood") == "Jazzy"
 
     @pytest.mark.asyncio
     async def test_case_variant_selects_the_existing_option(
@@ -142,7 +146,7 @@ class TestAdoptingUnknownValues:
             assert lst.option_count == 1
             assert lst.selected == ["happy"]
             await app._save_current_item_tags()
-        assert temp_beets_library.get_item(item.id).get("mood") == "HAPPY"
+        assert stored_item(temp_beets_library, item_id(item)).get("mood") == "HAPPY"
 
     @pytest.mark.asyncio
     async def test_case_variant_is_normalised_when_the_selection_changes(
@@ -155,7 +159,9 @@ class TestAdoptingUnknownValues:
         async with app.run_test():
             app.query_one("#selection-mood", CustomSelectionList).select("sad")
             await app._save_current_item_tags()
-        assert temp_beets_library.get_item(item.id).get("mood") == "happy, sad"
+        assert (
+            stored_item(temp_beets_library, item_id(item)).get("mood") == "happy, sad"
+        )
 
     @needs_list_field
     @pytest.mark.asyncio
@@ -173,7 +179,7 @@ class TestAdoptingUnknownValues:
             assert lst.option_count == 1
             assert lst.selected == ["House"]
             await app._save_current_item_tags()
-        stored = temp_beets_library.get_item(item.id)[LIST_FIELD]
+        stored = stored_item(temp_beets_library, item_id(item))[LIST_FIELD]
         assert sorted(stored) == ["Deep, Dark", "House"]
 
     @pytest.mark.asyncio
@@ -255,7 +261,7 @@ class TestAdoptingUnknownValues:
             assert lst.selected == []
             assert app.definitions.options("label") == ["Warp"]
             await app._save_current_item_tags()
-        assert temp_beets_library.get_item(item.id).label == "Other"
+        assert stored_item(temp_beets_library, item_id(item)).label == "Other"
         assert not path.exists()
 
 
@@ -270,7 +276,7 @@ class TestPersistDefinitions:
         path = tmp_path / "missing" / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy"]}, path)
         async with app.run_test():
-            header = app.query_one("#header_text_content", Static).render().plain
+            header = header_text(app)
         assert app.definitions.options("mood") == ["happy", "Jazzy"]
         assert not path.exists()
         assert "Could not write categories file" in header
@@ -294,7 +300,7 @@ class TestSaveErrors:
             await pilot.press("right")
             await pilot.pause()
             assert app.current_item_index == 1
-            header = app.query_one("#header_text_content", Static).render().plain
+            header = header_text(app)
             assert "Could not save" in header
             assert "disk full" in header
 
@@ -306,7 +312,7 @@ class TestSaveErrors:
 
         real_write = app_module.write_item_values
 
-        def write(item: object, category: str, values: list[str]) -> bool:
+        def write(item: Item, category: str, values: list[str]) -> bool:
             if category == "mood":
                 raise KeyError("computed field mood cannot be deleted")
             return real_write(item, category, values)
@@ -316,13 +322,13 @@ class TestSaveErrors:
         async with app.run_test() as pilot:
             app.query_one("#selection-mood", CustomSelectionList).select("happy")
             app.query_one("#selection-vibe", CustomSelectionList).select("afro")
-            item_id = app.item.id
+            current_id = item_id(app.item)
             await pilot.press("right")
             await pilot.pause()
             assert app.is_running
-            header = app.query_one("#header_text_content", Static).render().plain
+            header = header_text(app)
             assert "mood" in header
-        assert temp_beets_library.get_item(item_id).get("vibe") == "afro"
+        assert stored_item(temp_beets_library, current_id).get("vibe") == "afro"
 
 
 class TestCategoryPanelLayout:
@@ -456,9 +462,9 @@ class TestAddOptionFlow:
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
             await pilot.press("plus", "s", "a", "d", "enter")
-            item_id = app.item.id
+            current_id = item_id(app.item)
             await app._save_current_item_tags()
-        assert temp_beets_library.get_item(item_id).get("mood") == "sad"
+        assert stored_item(temp_beets_library, current_id).get("mood") == "sad"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -561,12 +567,12 @@ class TestAddCategoryFlow:
             await pilot.press("ctrl+n", "v", "i", "b", "e", "enter")
             await pilot.pause()
             await pilot.press("plus", "a", "f", "r", "o", "enter")
-            item_id = app.item.id
+            current_id = item_id(app.item)
             await pilot.press("right")  # saves the first item
             await pilot.press("left")  # reloads it
             vibe = app.query_one("#panel-vibe", CategoryPanel)
             assert vibe.selection_list.selected == ["afro"]
-        assert temp_beets_library.get_item(item_id).get("vibe") == "afro"
+        assert stored_item(temp_beets_library, current_id).get("vibe") == "afro"
 
     @pytest.mark.asyncio
     async def test_new_category_keeps_the_tracks_existing_value(
@@ -586,7 +592,7 @@ class TestAddCategoryFlow:
             assert app.definitions.options("vibe") == ["afro"]
             assert vibe.selection_list.selected == ["afro"]
             await pilot.press("right")
-        assert temp_beets_library.get_item(item.id).get("vibe") == "afro"
+        assert stored_item(temp_beets_library, item_id(item)).get("vibe") == "afro"
         assert read_definitions_file(path).options("vibe") == ["afro"]
 
     @needs_list_field
@@ -604,7 +610,7 @@ class TestAddCategoryFlow:
             panel = app.query_one(f"#panel-{LIST_FIELD}", CategoryPanel)
             assert panel.selection_list.selected == ["House"]
             await pilot.press("right")
-        assert temp_beets_library.get_item(item.id)[LIST_FIELD] == ["House"]
+        assert stored_item(temp_beets_library, item_id(item))[LIST_FIELD] == ["House"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -797,7 +803,7 @@ class TestEscape:
 class TestAddCategoryScrolling:
     """With enough categories the screen scrolls; the input must come into view."""
 
-    MANY = {f"cat{i:02d}": ["a", "b", "c"] for i in range(12)}
+    MANY: Mapping[object, object] = {f"cat{i:02d}": ["a", "b", "c"] for i in range(12)}
 
     @pytest.mark.asyncio
     async def test_ctrl_n_scrolls_the_new_category_input_into_view(

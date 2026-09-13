@@ -10,12 +10,14 @@ Covers:
 """
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from beets.library import Library
+from textual.content import Content
 from textual.widgets import Input
 
 from beetsplug.quicktag.app import NavigateDirection, QuickTagApp
@@ -23,7 +25,7 @@ from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from beetsplug.quicktag.widgets.playback import PlaybackEnded, PlaybackStateChanged
-from conftest import header_text, wait_for_footer_keys
+from conftest import header_text, item_id, stored_item, wait_for_footer_keys
 
 
 class TestQuickTagAppPlaybackConfiguration:
@@ -406,7 +408,7 @@ class TestQuickTagAppNavigation:
             autosave_on_quit_enabled=False,  # No safety net on quit
             keep_playing_on_track_change_if_playing_enabled=False,
         )
-        last_item_id = items[-1].id
+        last_item_id = item_id(items[-1])
 
         async with app.run_test() as pilot:
             for _ in range(len(items) - 1):
@@ -419,7 +421,9 @@ class TestQuickTagAppNavigation:
 
             assert app.current_item_index == len(items) - 1
             assert "All items processed" in header_text(app)
-            assert temp_beets_library.get_item(last_item_id).get("genre") == "Rock"
+            last_item = stored_item(temp_beets_library, last_item_id)
+            assert last_item is not None
+            assert last_item.get("genre") == "Rock"
 
 
 class TestQuickTagAppPlaybackActions:
@@ -777,8 +781,9 @@ class TestQuickTagAppRealPlaybackIntegration:
             pytest.skip("just_playback not available")
 
         async with app.run_test():
-            # Mock the item path to point to our test file
-            app.item.path = str(mp3_files["short"])
+            # Point the item at our test file (beets stores paths as bytes)
+            assert app.item is not None
+            app.item.path = os.fsencode(mp3_files["short"])
 
             # Load and play
             await app._load_current_item_for_playback()
@@ -887,6 +892,7 @@ class TestQuickTagAppMarkupSafety:
         async with app.run_test():
             selection_list = app.query_one("#selection-genre", CustomSelectionList)
             prompt = selection_list.get_option_at_index(0).prompt
+            assert isinstance(prompt, Content)
             assert prompt.plain == "lo-fi [chill]"
 
 
@@ -1198,6 +1204,7 @@ class TestTerminalTitle:
             lib=lib,
             items=items,
             definitions=CategoryDefinitions.from_config({"genre": ["Rock", "Pop"]}),
+            definitions_path=None,
             **settings,
         )
 

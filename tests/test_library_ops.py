@@ -1,10 +1,13 @@
 """Library-wide migrations for renamed and deleted options and categories."""
 
 import uuid
-from collections.abc import Generator
+from collections.abc import Generator, Iterable, Sequence
 from pathlib import Path
 
 import pytest
+from beets.dbcore.db import Results
+from beets.dbcore.query import Query
+from beets.dbcore.sort import Sort
 from beets.library import Item, Library
 
 from beetsplug.quicktag.library_ops import (
@@ -14,7 +17,7 @@ from beetsplug.quicktag.library_ops import (
     rename_category,
     rename_option,
 )
-from conftest import LIST_FIELD, needs_list_field
+from conftest import LIST_FIELD, item_id, needs_list_field, stored_item
 
 
 @pytest.fixture
@@ -32,11 +35,11 @@ def add_track(lib: Library, **fields: object) -> int:
     for name, value in fields.items():
         item[name] = value
     item.store()
-    return item.id
+    return item_id(item)
 
 
 def value_of(lib: Library, item_id: int, field: str) -> object:
-    return lib.get_item(item_id).get(field)
+    return stored_item(lib, item_id).get(field)
 
 
 class TestCountTracks:
@@ -92,10 +95,10 @@ class TestCountTracks:
     def test_ignores_values_inherited_from_the_album(self, lib: Library) -> None:
         """An album-level attribute is not the track's own value."""
         item_id = add_track(lib)
-        album = lib.add_album([lib.get_item(item_id)])
+        album = lib.add_album([stored_item(lib, item_id)])
         album["mood"] = "happy"
         album.store(inherit=False)
-        assert lib.get_item(item_id).get("mood") == "happy"
+        assert stored_item(lib, item_id).get("mood") == "happy"
         assert count_tracks(lib, "mood", "happy") == 0
         assert count_tracks(lib, "mood") == 0
 
@@ -133,7 +136,7 @@ class TestRenameOption:
     def test_list_field_stays_a_list(self, lib: Library) -> None:
         a = add_track(lib, genres=["Hiphop", "House"])
         rename_option(lib, LIST_FIELD, "Hiphop", "Hip-Hop")
-        assert lib.get_item(a)[LIST_FIELD] == ["Hip-Hop", "House"]
+        assert stored_item(lib, a)[LIST_FIELD] == ["Hip-Hop", "House"]
 
     def test_renames_flexible_attribute_non_ascii_case_insensitively(
         self, lib: Library
@@ -148,7 +151,7 @@ class TestRenameOption:
     ) -> None:
         a = add_track(lib, genres=["CAFÉ"])
         assert rename_option(lib, LIST_FIELD, "café", "Cafe") == 1
-        assert lib.get_item(a)[LIST_FIELD] == ["Cafe"]
+        assert stored_item(lib, a)[LIST_FIELD] == ["Cafe"]
 
     def test_failure_rolls_back_every_track(
         self, lib: Library, monkeypatch: pytest.MonkeyPatch
@@ -159,11 +162,11 @@ class TestRenameOption:
         original_store = Item.store
         stores: list[int] = []
 
-        def flaky_store(self: Item, *args: object, **kwargs: object) -> None:
-            stores.append(self.id)
+        def flaky_store(self: Item, fields: Iterable[str] | None = None) -> None:
+            stores.append(item_id(self))
             if len(stores) == 2:
                 raise RuntimeError("disk on fire")
-            original_store(self, *args, **kwargs)
+            original_store(self, fields)
 
         monkeypatch.setattr(Item, "store", flaky_store)
         with pytest.raises(RuntimeError, match="disk on fire"):
@@ -195,13 +198,13 @@ class TestRenameOption:
         b = add_track(lib, vibe="x")
         original_store = Item.store
 
-        def flaky_store(self: Item, *args: object, **kwargs: object) -> None:
-            if self.id == a:
+        def flaky_store(self: Item, fields: Iterable[str] | None = None) -> None:
+            if item_id(self) == a:
                 raise RuntimeError("disk on fire")
-            original_store(self, *args, **kwargs)
+            original_store(self, fields)
 
         with lib.transaction():
-            outer = lib.get_item(b)
+            outer = stored_item(lib, b)
             outer["vibe"] = "y"
             outer.store()
             monkeypatch.setattr(Item, "store", flaky_store)
@@ -224,9 +227,13 @@ class TestRenameOption:
         original_items = Library.items
         in_transaction: list[bool] = []
 
-        def recording_items(self: Library, *args: object) -> object:
+        def recording_items(
+            self: Library,
+            query: str | Sequence[str] | Query | None = None,
+            sort: Sort | None = None,
+        ) -> Results[Item]:
             in_transaction.append(self._connection().in_transaction)
-            return original_items(self, *args)
+            return original_items(self, query, sort)
 
         monkeypatch.setattr(Library, "items", recording_items)
         rename_option(lib, "mood", "Hiphop", "Hip-Hop")
@@ -243,7 +250,7 @@ class TestRemoveOption:
         a = add_track(lib, mood="Hiphop")
         remove_option(lib, "mood", "hiphop")
         assert value_of(lib, a, "mood") is None
-        assert "mood" not in lib.get_item(a)
+        assert "mood" not in stored_item(lib, a)
 
     def test_last_value_blanks_fixed_field(self, lib: Library) -> None:
         a = add_track(lib, grouping="Hiphop")
@@ -254,7 +261,7 @@ class TestRemoveOption:
     def test_last_value_empties_list_field(self, lib: Library) -> None:
         a = add_track(lib, genres=["Hiphop"])
         remove_option(lib, LIST_FIELD, "Hiphop")
-        assert lib.get_item(a)[LIST_FIELD] == []
+        assert stored_item(lib, a)[LIST_FIELD] == []
 
     def test_leaves_similar_tokens_alone(self, lib: Library) -> None:
         a = add_track(lib, mood="Deep Hiphop")
@@ -270,7 +277,7 @@ class TestRenameCategory:
         untouched = add_track(lib, vibe="x")
         assert rename_category(lib, "mood", "vibe") == 1
         assert value_of(lib, a, "vibe") == "a, b"
-        assert "mood" not in lib.get_item(a)
+        assert "mood" not in stored_item(lib, a)
         assert value_of(lib, untouched, "vibe") == "x"
 
     def test_merges_with_values_already_in_the_new_field(self, lib: Library) -> None:
@@ -288,8 +295,8 @@ class TestRenameCategory:
     def test_string_to_list_field_changes_shape(self, lib: Library) -> None:
         a = add_track(lib, genre="House, Techno")
         rename_category(lib, "genre", LIST_FIELD)
-        assert lib.get_item(a)[LIST_FIELD] == ["House", "Techno"]
-        assert not lib.get_item(a).get("genre")
+        assert stored_item(lib, a)[LIST_FIELD] == ["House", "Techno"]
+        assert not stored_item(lib, a).get("genre")
 
     def test_failure_rolls_back_every_track(
         self, lib: Library, monkeypatch: pytest.MonkeyPatch
@@ -299,11 +306,11 @@ class TestRenameCategory:
         original_store = Item.store
         stores: list[int] = []
 
-        def flaky_store(self: Item, *args: object, **kwargs: object) -> None:
-            stores.append(self.id)
+        def flaky_store(self: Item, fields: Iterable[str] | None = None) -> None:
+            stores.append(item_id(self))
             if len(stores) == 2:
                 raise RuntimeError("disk on fire")
-            original_store(self, *args, **kwargs)
+            original_store(self, fields)
 
         monkeypatch.setattr(Item, "store", flaky_store)
         with pytest.raises(RuntimeError, match="disk on fire"):
@@ -332,8 +339,8 @@ class TestRemoveCategory:
         b = add_track(lib, mood="b, c")
         add_track(lib)
         assert remove_category(lib, "mood") == 2
-        assert "mood" not in lib.get_item(a)
-        assert "mood" not in lib.get_item(b)
+        assert "mood" not in stored_item(lib, a)
+        assert "mood" not in stored_item(lib, b)
 
     def test_blanks_fixed_field(self, lib: Library) -> None:
         a = add_track(lib, grouping="a")
@@ -344,4 +351,4 @@ class TestRemoveCategory:
     def test_empties_list_field(self, lib: Library) -> None:
         a = add_track(lib, genres=["a"])
         remove_category(lib, LIST_FIELD)
-        assert lib.get_item(a)[LIST_FIELD] == []
+        assert stored_item(lib, a)[LIST_FIELD] == []

@@ -45,11 +45,12 @@ packages = ["beetsplug"]
 dev = [
     "debugpy>=1.8.14",
     "git-cliff>=2.9.1",
-    "pytest>=8.3.5",
+    "pytest>=9",
     "pytest-asyncio>=0.26.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.11.9",
     "textual-dev>=1.7.0",
+    "ty>=0.0.79",
 ]
 
 [tool.uv.sources]
@@ -148,3 +149,9 @@ skip_tags = "v0.1.0-beta.1"
 ignore_tags = ""
 topo_order = false
 sort_commits = "oldest"
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = ["beetsplug", "tests"]
