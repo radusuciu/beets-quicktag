@@ -1,10 +1,13 @@
 """Unit tests for the CategoryDefinitions model. No Textual, no beets library."""
 
+from collections.abc import Callable, Mapping
+
 import pytest
 from beets.library import Item
 
 from beetsplug.quicktag.definitions import (
     CategoryDefinitions,
+    Scale,
     find_case_insensitive,
 )
 
@@ -262,7 +265,9 @@ class TestFromConfig:
 
     def test_to_mapping_returns_copies(self) -> None:
         defs = CategoryDefinitions.from_config({"mood": ["happy"]})
-        defs.to_mapping()["mood"].append("x")
+        exported = defs.to_mapping()["mood"]
+        assert isinstance(exported, list)
+        exported.append("x")
         assert defs.options("mood") == ["happy"]
 
     @pytest.mark.parametrize("name", [2020, True])
@@ -504,3 +509,130 @@ class TestSortedOptions:
             {"mood": ["sad", "happy"]}, sort_options=True
         )
         assert defs.to_mapping() == {"mood": ["happy", "sad"]}
+
+
+class TestScale:
+    def test_parse_range(self) -> None:
+        assert Scale.parse("1..5") == Scale(1, 5)
+        assert Scale.parse(" 0 .. 10 ") == Scale(0, 10)
+
+    @pytest.mark.parametrize("text", ["", "happy", "1-5", "1..", "1..5..9", "a..b"])
+    def test_parse_returns_none_for_non_ranges(self, text: str) -> None:
+        assert Scale.parse(text) is None
+
+    @pytest.mark.parametrize("text", ["1..11", "5..5", "5..1", "0..0"])
+    def test_parse_refuses_ranges_outside_the_limits(self, text: str) -> None:
+        with pytest.raises(ValueError, match="0 <= low < high <= 10"):
+            Scale.parse(text)
+
+    def test_spec_and_steps(self) -> None:
+        scale = Scale(1, 5)
+        assert scale.spec() == "1..5"
+        assert list(scale.steps()) == [1, 2, 3, 4, 5]
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("3", 3),
+            (" 5 ", 5),
+            ("1", 1),
+            ("0", None),
+            ("6", None),
+            ("high", None),
+            ("", None),
+            (None, None),
+            ("3.0", None),
+        ],
+    )
+    def test_parse_value(self, text: str | None, expected: int | None) -> None:
+        assert Scale(1, 5).parse_value(text) == expected
+
+
+class TestScaleCategories:
+    def test_from_config_accepts_a_range_string(self) -> None:
+        defs = CategoryDefinitions.from_config(
+            {"mood": ["happy"], "energy": "1..5", "vibe": ["dark"]}
+        )
+        assert defs.categories == ["mood", "energy", "vibe"]
+        assert defs.scale("energy") == Scale(1, 5)
+        assert defs.is_scale("energy")
+        assert defs.scale("mood") is None
+        assert not defs.is_scale("mood")
+
+    def test_options_of_a_scale_is_an_error(self) -> None:
+        defs = CategoryDefinitions.from_config({"energy": "1..5"})
+        with pytest.raises(ValueError, match="'energy' is a scale"):
+            defs.options("energy")
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda d: d.add_option("energy", "x"),
+            lambda d: d.rename_option("energy", "1", "2"),
+            lambda d: d.remove_option("energy", "1"),
+        ],
+    )
+    def test_option_edits_on_a_scale_are_errors(
+        self, call: Callable[[CategoryDefinitions], object]
+    ) -> None:
+        defs = CategoryDefinitions.from_config({"energy": "1..5"})
+        with pytest.raises(ValueError, match="'energy' is a scale"):
+            call(defs)
+
+    def test_other_strings_are_still_refused_and_show_both_shapes(self) -> None:
+        with pytest.raises(
+            ValueError, match=r"mood: \[happy, other_option\].*mood: 1\.\.5"
+        ):
+            CategoryDefinitions.from_config({"mood": "happy"})
+
+    def test_range_outside_limits_names_the_category(self) -> None:
+        with pytest.raises(
+            ValueError, match="Category 'energy'.*0 <= low < high <= 10"
+        ):
+            CategoryDefinitions.from_config({"energy": "1..20"})
+
+    @pytest.mark.parametrize("name", ["bpm", "album", "genres"])
+    def test_scale_refuses_every_fixed_field(self, name: str) -> None:
+        with pytest.raises(ValueError, match="built-in beets field"):
+            CategoryDefinitions.from_config({name: "1..5"})
+
+    def test_to_mapping_round_trips(self) -> None:
+        mapping: Mapping[object, object] = {"mood": ["happy", "sad"], "energy": "1..5"}
+        defs = CategoryDefinitions.from_config(mapping)
+        assert defs.to_mapping() == mapping
+        again = CategoryDefinitions.from_config({**defs.to_mapping()})
+        assert again.scale("energy") == Scale(1, 5)
+
+    def test_copy_keeps_the_scale_and_is_independent(self) -> None:
+        defs = CategoryDefinitions.from_config({"energy": "1..5", "mood": ["a"]})
+        clone = defs.copy()
+        assert clone.scale("energy") == Scale(1, 5)
+        clone.add_option("mood", "b")
+        assert defs.options("mood") == ["a"]
+
+    def test_rename_category_keeps_the_scale(self) -> None:
+        defs = CategoryDefinitions.from_config({"energy": "1..5"})
+        assert defs.rename_category("energy", "power") == "power"
+        assert defs.categories == ["power"]
+        assert defs.scale("power") == Scale(1, 5)
+
+    def test_rename_scale_onto_a_list_field_is_refused(self) -> None:
+        defs = CategoryDefinitions.from_config({"energy": "1..5"})
+        with pytest.raises(ValueError, match="built-in beets field"):
+            defs.rename_category("energy", "genres")
+
+    def test_remove_category_drops_a_scale(self) -> None:
+        defs = CategoryDefinitions.from_config({"energy": "1..5", "mood": ["a"]})
+        defs.remove_category("energy")
+        assert defs.categories == ["mood"]
+
+    def test_sort_options_ignores_scales(self) -> None:
+        defs = CategoryDefinitions.from_config(
+            {"energy": "1..5", "mood": ["b", "a"]}, sort_options=True
+        )
+        assert defs.options("mood") == ["a", "b"]
+        assert defs.scale("energy") == Scale(1, 5)
+
+    def test_fixed_field_warnings_skip_scales(self) -> None:
+        defs = CategoryDefinitions.from_config({"energy": "1..5", "album": ["x"]})
+        assert len(defs.fixed_field_warnings()) == 1
