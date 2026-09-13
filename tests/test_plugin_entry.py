@@ -206,3 +206,39 @@ class TestLoadRules:
             )
         app_class.assert_not_called()
         assert "No tracks found" in capsys.readouterr().out
+
+
+class TestSortOptions:
+    def test_off_by_default(self) -> None:
+        plugin = QuickTagPlugin()
+        assert plugin.config["sort_options"].get(bool) is False
+
+    def test_definitions_are_sorted_when_on(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (tmp_path / "quicktag_categories.yaml").write_text(
+            yaml.safe_dump({"mood": ["sad", "happy"]})
+        )
+        plugin = make_plugin(tmp_path, monkeypatch, sort_options=True)
+        app_class = run(plugin, temp_beets_library)
+        definitions = app_class.call_args.kwargs["definitions"]
+        assert definitions.sort_options is True
+        assert definitions.options("mood") == ["happy", "sad"]
+
+    def test_file_order_is_kept_when_off(
+        self,
+        temp_beets_library: Library,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (tmp_path / "quicktag_categories.yaml").write_text(
+            yaml.safe_dump({"mood": ["sad", "happy"]})
+        )
+        plugin = make_plugin(tmp_path, monkeypatch)
+        app_class = run(plugin, temp_beets_library)
+        definitions = app_class.call_args.kwargs["definitions"]
+        assert definitions.sort_options is False
+        assert definitions.options("mood") == ["sad", "happy"]

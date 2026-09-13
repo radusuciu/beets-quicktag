@@ -393,7 +393,7 @@ class QuickTagApp(App):
             panel.show_error(str(error))
             return
         self._persist_definitions()
-        panel.add_option(value, select=True)
+        panel.add_option(value, select=True, index=self._option_index(panel, value))
         panel.close_input()
 
     async def _submit_option_rename(
@@ -420,6 +420,7 @@ class QuickTagApp(App):
             panel,
             planned,
             partial(rename_option, self.lib, category, old, new),
+            highlight=new,
         )
         if merged:
             question = f"Merge '{old}' into '{new}' on {count} tracks? y/n"
@@ -522,15 +523,22 @@ class QuickTagApp(App):
         panel: CategoryPanel,
         planned: CategoryDefinitions,
         migrate: Callable[[], int],
+        *,
+        highlight: str | None = None,
     ) -> None:
-        """Migrate, swap the definitions in, rebuild the list, reload the track."""
+        """Migrate, swap the definitions in, rebuild the list, reload the track.
+
+        The highlight stays on ``highlight`` if given (a renamed option may
+        move when the options are sorted), otherwise on the same index.
+        """
         highlighted = panel.selection_list.highlighted
         changed = await self._apply_edit(planned, migrate)
         if changed is None:
             return
-        panel.set_options(
-            self.definitions.options(panel.category), highlighted=highlighted
-        )
+        options = self.definitions.options(panel.category)
+        if highlight in options:
+            highlighted = options.index(highlight)
+        panel.set_options(options, highlighted=highlighted)
         await self._refresh_tracks(changed)
 
     async def _rename_category(
@@ -1193,7 +1201,12 @@ class QuickTagApp(App):
             )
             return False
         try:
-            self._panel(category_name).add_option(value, select=False)
+            panel = self._panel(category_name)
         except NoMatches:
-            pass
+            return True
+        panel.add_option(value, select=False, index=self._option_index(panel, value))
         return True
+
+    def _option_index(self, panel: CategoryPanel, value: str) -> int:
+        """Where ``value`` sits in the definitions, so the list matches them."""
+        return self.definitions.options(panel.category).index(value)

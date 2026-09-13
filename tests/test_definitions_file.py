@@ -146,3 +146,42 @@ class TestLoadOrSeed:
         with pytest.raises(DefinitionsFileError):
             load_or_seed(path, {"mood": ["happy"]})
         assert path.read_text(encoding="utf-8") == "mood: [happy, sad\n"
+
+
+class TestSortOptions:
+    def test_read_sorts_when_asked(self, tmp_path: Path) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        path.write_text("mood: [sad, Happy, calm]\n", encoding="utf-8")
+        assert read_definitions_file(path).options("mood") == ["sad", "Happy", "calm"]
+        defs = read_definitions_file(path, sort_options=True)
+        assert defs.sort_options is True
+        assert defs.options("mood") == ["calm", "Happy", "sad"]
+
+    def test_sorted_definitions_are_written_sorted(self, tmp_path: Path) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        defs = CategoryDefinitions.from_config(
+            {"mood": ["sad", "happy"]}, sort_options=True
+        )
+        write_definitions_file(path, defs)
+        assert path.read_text(encoding="utf-8") == "mood:\n- happy\n- sad\n"
+
+    def test_load_or_seed_passes_the_flag_to_an_existing_file(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        path.write_text("mood: [sad, happy]\n", encoding="utf-8")
+        definitions, created = load_or_seed(path, None, sort_options=True)
+        assert definitions is not None
+        assert definitions.options("mood") == ["happy", "sad"]
+        # Loading only reads; the file is rewritten on the next edit.
+        assert path.read_text(encoding="utf-8") == "mood: [sad, happy]\n"
+
+    def test_load_or_seed_passes_the_flag_to_the_seed(self, tmp_path: Path) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        definitions, created = load_or_seed(
+            path, {"mood": ["sad", "happy"]}, sort_options=True
+        )
+        assert definitions is not None
+        assert definitions.options("mood") == ["happy", "sad"]
+        assert created is True
+        assert read_definitions_file(path).options("mood") == ["happy", "sad"]
