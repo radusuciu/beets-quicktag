@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -22,6 +22,7 @@ import pytest
 from beets.library import Item, Library
 from just_playback import Playback
 from mutagen.id3 import ID3, TALB, TIT2, TPE1
+from textual.content import Content
 from textual.pilot import Pilot
 from textual.widgets import Footer, Static
 from textual.widgets._footer import FooterKey
@@ -29,6 +30,7 @@ from textual.widgets._footer import FooterKey
 from beetsplug.quicktag.app import QuickTagApp
 from beetsplug.quicktag.definitions import CategoryDefinitions
 from beetsplug.quicktag.widgets.custom_selection_list import CustomSelectionList
+from beetsplug.quicktag.widgets.playback import PlaybackWidget
 
 # The only fixed list-valued field that works as a category. Older beets
 # versions have a plain-text ``genre`` and no ``genres``.
@@ -41,7 +43,7 @@ needs_list_field = pytest.mark.skipif(
 
 def make_app(
     lib: Library,
-    mapping: dict[str, list[str]],
+    mapping: Mapping[object, object],
     definitions_path: Path | None = None,
     items: list[Item] | None = None,
     **settings: bool,
@@ -65,9 +67,39 @@ def make_app(
     )
 
 
+def rendered_text(static: Static) -> str:
+    """The plain text ``static`` renders. Its content was set from a string,
+    so ``render()`` hands back the ``Content`` Textual wrapped it in."""
+    rendered = static.render()
+    assert isinstance(rendered, Content)
+    return rendered.plain
+
+
 def header_text(app: QuickTagApp) -> str:
     """The text the header line actually renders."""
-    return app.query_one("#header_text_content", Static).render().plain
+    return rendered_text(app.query_one("#header_text_content", Static))
+
+
+def current_item(app: QuickTagApp) -> Item:
+    """The track the app is on; it has one whenever the queue is not empty."""
+    assert app.item is not None
+    return app.item
+
+
+def item_id(item: Item | None) -> int:
+    """The id of an item that has been added to a library. beets types the
+    attribute as optional because it is unset until then; the item itself is
+    optional so the app's current track can be passed straight in."""
+    assert item is not None
+    assert item.id is not None
+    return item.id
+
+
+def stored_item(lib: Library, id_: int) -> Item:
+    """Re-read the track ``id_`` from ``lib``, which must still hold it."""
+    item = lib.get_item(id_)
+    assert item is not None
+    return item
 
 
 async def wait_for_footer_keys(
@@ -485,3 +517,14 @@ def unicode_filename(temp_dir: Path, mp3_files: dict[str, Path]) -> Path:
 def nonexistent_file(temp_dir: Path) -> Path:
     """Return path to a non-existent file for testing error handling."""
     return temp_dir / "does_not_exist.mp3"
+
+
+def fake_player_of(widget: PlaybackWidget) -> Mock:
+    """Return ``widget.player`` typed as the fake that ``fake_playback`` installs.
+
+    ``PlaybackWidget.player`` is declared ``Playback | None``; tests that poke
+    the fake's state or assert on its calls need the ``Mock`` type instead.
+    """
+    player = widget.player
+    assert isinstance(player, Mock)
+    return player

@@ -11,7 +11,7 @@ from beetsplug.quicktag.item_values import (
     split_value,
     write_item_values,
 )
-from conftest import LIST_FIELD, needs_list_field
+from conftest import LIST_FIELD, item_id, needs_list_field, stored_item
 
 
 class TestSplitValue:
@@ -123,7 +123,7 @@ class TestAlbumFallback:
         # ``inherit=True`` (the default) would copy the value onto the track;
         # the case under test is an album value the track only falls back to.
         album.store(inherit=False)
-        return lib.get_item(item.id)
+        return stored_item(lib, item_id(item))
 
     def test_album_value_is_not_read(self, item_in_album: Item) -> None:
         assert item_in_album.get("mood") == "dark"
