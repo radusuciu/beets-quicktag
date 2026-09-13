@@ -49,6 +49,7 @@ dev = [
     "pytest-asyncio>=0.26.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.11.9",
+    "rust-just>=1.58.0",
     "textual-dev>=1.7.0",
     "ty>=0.0.79",
 ]
@@ -59,7 +60,7 @@ just-playback = { git = "https://github.com/radusuciu/just_playback.git", branch
 [tool.ruff]
 target-version = "py311"
 line-length = 88
-extend-exclude = ["docs"]
+extend-exclude = ["docs", ".claude"]
 
 [tool.ruff.lint]
 select = [

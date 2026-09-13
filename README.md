@@ -100,18 +100,28 @@ Category names may only contain letters, digits, underscores and hyphens, cannot
 
 ## Development
 
-### Running Tests
+### Common Tasks
+
+Day-to-day commands are collected in a `justfile` and run with [just](https://github.com/casey/just). It is installed into the project's virtual environment as a dev dependency by `uv sync`, so activate the environment first (`source .venv/bin/activate`) or install `just` on your system with your package manager.
+
+```bash
+just            # list available recipes
+just lint       # lint and check formatting (same as CI)
+just fix        # fix lint errors and reformat
+just typecheck  # type check with ty
+just test       # run the test suite
+just check      # lint, type check and test in one go
+```
+
+Anything after `just test` is passed straight to pytest, so `just test -k playback` runs only the playback tests. The tests run with `BEETSDIR` pointing at an empty temporary directory so your own beets config and library are never read or written.
+
+If you prefer to skip `just`, the underlying commands are:
 
 ```bash
 uv run pytest
-```
-
-### Code Quality
-
-```bash
-uv run ruff check .  # Linting
-uv run ruff format . # Formatting
-uv run ty check      # Type checking
+uv run ruff check .
+uv run ruff format .
+uv run ty check
 ```
 
 ### Re-recording the Demo
