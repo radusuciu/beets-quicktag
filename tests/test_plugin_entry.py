@@ -19,15 +19,17 @@ def make_plugin(
 ) -> QuickTagPlugin:
     """A plugin whose config lives in a private confuse root.
 
-    ``confuse.Filename(in_app_dir=True)`` resolves against the root's config
-    dir, which for a ``Configuration("quicktagtest")`` is ``$QUICKTAGTESTDIR``.
+    The plugin gets a ``quicktag`` subview, as beets hands it one of the
+    global config. ``confuse.Filename(in_app_dir=True)`` resolves against
+    the root's config dir, which for a ``Configuration("quicktagtest")`` is
+    ``$QUICKTAGTESTDIR``.
     """
     monkeypatch.setenv("QUICKTAGTESTDIR", str(tmp_path))
-    config = confuse.Configuration("quicktagtest", read=False)
-    config.add(DEFAULT_CONFIG)
-    config.set(values)
+    root = confuse.Configuration("quicktagtest", read=False)
+    root.add({"quicktag": DEFAULT_CONFIG})
+    root.set({"quicktag": values})
     plugin = QuickTagPlugin()
-    plugin.config = config
+    plugin.config = root["quicktag"]
     return plugin
 
 

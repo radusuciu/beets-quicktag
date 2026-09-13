@@ -22,11 +22,15 @@ from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from beetsplug.quicktag.widgets.playback import PlaybackEnded
 from conftest import (
     LIST_FIELD,
+    current_item,
     header_text,
+    item_id,
     make_app,
     needs_list_field,
     prompts,
+    rendered_text,
     settle,
+    stored_item,
     wait_for_footer_keys,
 )
 
@@ -53,7 +57,7 @@ def tracks(lib: Library) -> list[Item]:
 
 def set_field(lib: Library, item_id: int, field: str, value: str | None) -> None:
     """Seed a track through the helper the app itself writes with."""
-    item = lib.get_item(item_id)
+    item = stored_item(lib, item_id)
     write_item_values(item, field, split_value(value))
     item.store()
 
@@ -178,7 +182,7 @@ class TestPanelInline:
             assert panel.inline_active is True
             assert panel.input_active is False
             assert app.focused is panel.confirm_prompt
-            assert panel.confirm_prompt.render().plain == "Sure? y/n"
+            assert rendered_text(panel.confirm_prompt) == "Sure? y/n"
 
     @pytest.mark.asyncio
     async def test_y_runs_the_action_once_and_refocuses_the_list(
@@ -349,7 +353,7 @@ class TestHeaderMessages:
             await pilot.press("right")
             await pilot.pause()
             assert header_text(app) == (
-                f"Tagging: {app.item.artist} - {app.item.title}"
+                f"Tagging: {current_item(app).artist} - {current_item(app).title}"
             )
 
     @pytest.mark.asyncio
@@ -386,7 +390,7 @@ class TestHeaderMessages:
             app.header_widget.show_transient("Updating library…")
             await pilot.press("right")
             await pilot.pause()
-            title = f"Tagging: {app.item.artist} - {app.item.title}"
+            title = f"Tagging: {current_item(app).artist} - {current_item(app).title}"
             assert header_text(app) == title
             app.header_widget.clear_transient()
             assert header_text(app) == title
@@ -399,12 +403,12 @@ class TestReloadAfterMigration:
     ) -> None:
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
         async with app.run_test():
-            item_id = app.item.id
-            set_field(temp_beets_library, item_id, "mood", "sad")
+            current_id = item_id(app.item)
+            set_field(temp_beets_library, current_id, "mood", "sad")
             await app._reload_after_migration()
-            assert app.item.id == item_id
+            assert item_id(app.item) == current_id
             assert app.items[app.current_item_index] is app.item
-            assert app.item.get("mood") == "sad"
+            assert current_item(app).get("mood") == "sad"
             lst = app.query_one("#selection-mood", CustomSelectionList)
             assert lst.selected == ["sad"]
 
@@ -416,10 +420,10 @@ class TestReloadAfterMigration:
         async with app.run_test() as pilot:
             await pilot.press("right")
             await pilot.pause()
-            index, item_id = app.current_item_index, app.item.id
+            index, current_id = app.current_item_index, item_id(app.item)
             assert index == 1
             await app._reload_after_migration()
-            assert (app.current_item_index, app.item.id) == (index, item_id)
+            assert (app.current_item_index, item_id(app.item)) == (index, current_id)
             assert len(app.items) == len(tracks(temp_beets_library))
 
     @pytest.mark.asyncio
@@ -427,20 +431,25 @@ class TestReloadAfterMigration:
         self, temp_beets_library: Library
     ) -> None:
         first, second = tracks(temp_beets_library)[:2]
-        set_field(temp_beets_library, first.id, "mood", "x")
-        set_field(temp_beets_library, second.id, "mood", "x")
-        queued = [temp_beets_library.get_item(item.id) for item in (first, second)]
+        set_field(temp_beets_library, item_id(first), "mood", "x")
+        set_field(temp_beets_library, item_id(second), "mood", "x")
+        queued = [
+            stored_item(temp_beets_library, item_id(item)) for item in (first, second)
+        ]
         app = make_app(temp_beets_library, {"mood": ["x"]}, items=queued)
         async with app.run_test() as pilot:
             assert len(app.items) == 2
             await pilot.press("right")
             await pilot.pause()
-            assert app.item.id == second.id
-            set_field(temp_beets_library, second.id, "mood", None)
+            assert item_id(app.item) == item_id(second)
+            set_field(temp_beets_library, item_id(second), "mood", None)
             await app._reload_after_migration()
-            assert app.item.id == second.id
+            assert item_id(app.item) == item_id(second)
             assert app.items[app.current_item_index] is app.item
-            assert [item.id for item in app.items] == [first.id, second.id]
+            assert [item_id(item) for item in app.items] == [
+                item_id(first),
+                item_id(second),
+            ]
             assert app.query_one("#selection-mood", CustomSelectionList).selected == []
 
     @pytest.mark.asyncio
@@ -479,11 +488,11 @@ class TestMigrationKeepsTheQueue:
         """The session tags the tracks it was launched with, migration or not."""
         queued = tracks(temp_beets_library)[:3]
         for item in queued:
-            set_field(temp_beets_library, item.id, "mood", "hiphop")
+            set_field(temp_beets_library, item_id(item), "mood", "hiphop")
         app = make_app(
             temp_beets_library,
             {"mood": ["hiphop"]},
-            items=[temp_beets_library.get_item(item.id) for item in queued],
+            items=[stored_item(temp_beets_library, item_id(item)) for item in queued],
         )
         async with app.run_test() as pilot:
             held = list(app.items)
@@ -491,7 +500,9 @@ class TestMigrationKeepsTheQueue:
             await submit(app, pilot, "t", "r", "a", "p")
             await answer(app, pilot, "y")
             assert len(app.items) == 3
-            assert [item.id for item in app.items] == [item.id for item in queued]
+            assert [item_id(item) for item in app.items] == [
+                item_id(item) for item in queued
+            ]
             assert all(item.get("mood") == "trap" for item in app.items)
             assert all(new is not old for new, old in zip(app.items, held, strict=True))
             assert app.items[app.current_item_index] is app.item
@@ -600,12 +611,12 @@ class TestEditFlowsShared:
             panel = await start_edit(app, pilot, kind, index=1)
             if panel.input_active:
                 await submit(app, pilot, "x")
-            assert panel.confirm_prompt.render().plain == expected
-            item_id = app.item.id
-            assert temp_beets_library.get_item(item_id).get("mood") is None
-            assert temp_beets_library.get_item(item_id).get("vibe") is None
+            assert rendered_text(panel.confirm_prompt) == expected
+            current_id = item_id(app.item)
+            assert stored_item(temp_beets_library, current_id).get("mood") is None
+            assert stored_item(temp_beets_library, current_id).get("vibe") is None
             await answer(app, pilot, "y")
-            stored = temp_beets_library.get_item(item_id)
+            stored = stored_item(temp_beets_library, current_id)
             assert stored.get("vibe") == "afro"
             for field, value in stored_after.items():
                 assert stored.get(field) == value, field
@@ -627,8 +638,8 @@ class TestEditFlowsShared:
         """Cancelling leaves the track as it was: stored value untouched and
         the pending selection still pending."""
         first, second = tracks(temp_beets_library)[:2]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        set_field(temp_beets_library, second.id, "mood", "sad")
+        set_field(temp_beets_library, item_id(first), "mood", "sad")
+        set_field(temp_beets_library, item_id(second), "mood", "sad")
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
         async with app.run_test() as pilot:
             selection_list = app.query_one("#selection-mood", CustomSelectionList)
@@ -644,7 +655,7 @@ class TestEditFlowsShared:
             assert panel.selection_list.selected == ["happy"]
             assert app.focused is panel.selection_list
             assert app.is_running
-            assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+            assert stored_item(temp_beets_library, item_id(first)).get("mood") == "sad"
 
     @pytest.mark.asyncio
     async def test_failing_save_of_the_current_track_aborts_the_edit(
@@ -698,7 +709,7 @@ class TestEditFlowsShared:
         kind: EditKind,
     ) -> None:
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
+        set_field(temp_beets_library, item_id(first), "mood", "sad")
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
 
@@ -721,7 +732,7 @@ class TestEditFlowsShared:
             assert app.focused is panel.selection_list
             assert app.is_running
         assert not path.exists()
-        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+        assert stored_item(temp_beets_library, item_id(first)).get("mood") == "sad"
 
     @pytest.mark.asyncio
     async def test_header_says_the_library_is_being_updated(
@@ -743,7 +754,7 @@ class TestEditFlowsShared:
             await answer(app, pilot, "y")
             assert seen == ["Updating library…"]
             assert header_text(app) == (
-                f"Tagging: {app.item.artist} - {app.item.title}"
+                f"Tagging: {current_item(app).artist} - {current_item(app).title}"
             )
 
     @pytest.mark.asyncio
@@ -753,7 +764,7 @@ class TestEditFlowsShared:
         """ "Updating library…" is transient: once the library is updated
         the header shows what it showed before."""
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
+        set_field(temp_beets_library, item_id(first), "mood", "sad")
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, items=[first])
         async with app.run_test() as pilot:
             await pilot.press("right")
@@ -764,7 +775,7 @@ class TestEditFlowsShared:
             await answer(app, pilot, "y")
             assert header_text(app) == done
             assert app.definitions.options("mood") == ["happy"]
-        assert "mood" not in temp_beets_library.get_item(first.id)
+        assert "mood" not in stored_item(temp_beets_library, item_id(first))
 
     @pytest.mark.asyncio
     async def test_failure_replaces_all_items_processed(
@@ -794,7 +805,7 @@ class TestEditFlowsShared:
         so the track must be reloaded or the next save writes the old value
         back; and the warning must outlive that reload."""
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
+        set_field(temp_beets_library, item_id(first), "mood", "sad")
         path = tmp_path / "missing" / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
         async with app.run_test() as pilot:
@@ -802,13 +813,13 @@ class TestEditFlowsShared:
             await answer(app, pilot, "y")
             assert "Could not write categories file" in header_text(app)
             assert app.definitions.options("mood") == ["happy"]
-            assert app.item.get("mood") is None
+            assert current_item(app).get("mood") is None
             assert panel.selection_list.selected == []
             assert app.is_running
             await pilot.press("right")
             await pilot.pause()
         assert not path.exists()
-        assert "mood" not in temp_beets_library.get_item(first.id)
+        assert "mood" not in stored_item(temp_beets_library, item_id(first))
 
 
 class TestTrackChangeWhileEditing:
@@ -818,7 +829,7 @@ class TestTrackChangeWhileEditing:
     ) -> None:
         """Left/Right reach the app while the prompt has focus."""
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "sad")
+        set_field(temp_beets_library, item_id(first), "mood", "sad")
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
         async with app.run_test() as pilot:
             panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
@@ -830,7 +841,7 @@ class TestTrackChangeWhileEditing:
             assert app.focused is panel.selection_list
             await answer(app, pilot, "y")
             assert app.definitions.options("mood") == ["happy", "sad"]
-        assert temp_beets_library.get_item(first.id).get("mood") == "sad"
+        assert stored_item(temp_beets_library, item_id(first)).get("mood") == "sad"
 
     @pytest.mark.asyncio
     async def test_left_on_the_first_track_keeps_the_confirm(
@@ -923,15 +934,15 @@ class TestRenameOptionFlow:
         self, temp_beets_library: Library, tmp_path: Path
     ) -> None:
         first, second = tracks(temp_beets_library)[:2]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        set_field(temp_beets_library, second.id, "mood", "sad, happy")
+        set_field(temp_beets_library, item_id(first), "mood", "sad")
+        set_field(temp_beets_library, item_id(second), "mood", "sad, happy")
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]}, path)
         async with app.run_test() as pilot:
             panel = await start_edit(app, pilot, EditKind.RENAME_OPTION, index=1)
             await submit(app, pilot, "b", "l", "u", "e")
             assert panel.confirm_active is True
-            assert panel.confirm_prompt.render().plain == (
+            assert rendered_text(panel.confirm_prompt) == (
                 "Rename 'sad' to 'blue' on 2 tracks? y/n"
             )
             assert app.definitions.options("mood") == ["happy", "sad"]
@@ -940,10 +951,13 @@ class TestRenameOptionFlow:
             assert app.definitions.options("mood") == ["happy", "blue"]
             assert prompts(panel.selection_list) == ["happy", "blue"]
             assert panel.selection_list.selected == ["blue"]
-            assert app.item.get("mood") == "blue"
+            assert current_item(app).get("mood") == "blue"
             assert app.focused is panel.selection_list
-        assert temp_beets_library.get_item(first.id).get("mood") == "blue"
-        assert temp_beets_library.get_item(second.id).get("mood") == "blue, happy"
+        assert stored_item(temp_beets_library, item_id(first)).get("mood") == "blue"
+        assert (
+            stored_item(temp_beets_library, item_id(second)).get("mood")
+            == "blue, happy"
+        )
         assert read_definitions_file(path).options("mood") == ["happy", "blue"]
 
     @pytest.mark.asyncio
@@ -951,12 +965,12 @@ class TestRenameOptionFlow:
         self, temp_beets_library: Library
     ) -> None:
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "Hiphop")
+        set_field(temp_beets_library, item_id(first), "mood", "Hiphop")
         app = make_app(temp_beets_library, {"mood": ["Hiphop", "Hip-Hop"]})
         async with app.run_test() as pilot:
             panel = await start_edit(app, pilot, EditKind.RENAME_OPTION)
             await submit(app, pilot, *"hip", "minus", *"hop")
-            assert panel.confirm_prompt.render().plain == (
+            assert rendered_text(panel.confirm_prompt) == (
                 "Merge 'Hiphop' into 'Hip-Hop' on 1 tracks? y/n"
             )
             await answer(app, pilot, "y")
@@ -964,7 +978,7 @@ class TestRenameOptionFlow:
             assert prompts(panel.selection_list) == ["Hip-Hop"]
             assert panel.selection_list.selected == ["Hip-Hop"]
             assert panel.selection_list.highlighted == 0
-        assert temp_beets_library.get_item(first.id).get("mood") == "Hip-Hop"
+        assert stored_item(temp_beets_library, item_id(first)).get("mood") == "Hip-Hop"
 
     @pytest.mark.asyncio
     async def test_merge_asks_even_with_no_tracks(
@@ -975,7 +989,7 @@ class TestRenameOptionFlow:
             panel = await start_edit(app, pilot, EditKind.RENAME_OPTION)
             await submit(app, pilot, *"hip", "minus", *"hop")
             assert panel.confirm_active is True
-            assert "0 tracks" in panel.confirm_prompt.render().plain
+            assert "0 tracks" in rendered_text(panel.confirm_prompt)
 
     @pytest.mark.asyncio
     async def test_merge_by_exact_spelling_is_still_a_merge(
@@ -985,7 +999,7 @@ class TestRenameOptionFlow:
         async with app.run_test() as pilot:
             panel = await start_edit(app, pilot, EditKind.RENAME_OPTION)
             await submit(app, pilot, *"Hip", "minus", *"Hop")
-            assert panel.confirm_prompt.render().plain == (
+            assert rendered_text(panel.confirm_prompt) == (
                 "Merge 'Hiphop' into 'Hip-Hop' on 0 tracks? y/n"
             )
 
@@ -996,13 +1010,13 @@ class TestRemoveOptionFlow:
         self, temp_beets_library: Library
     ) -> None:
         first, second = tracks(temp_beets_library)[:2]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        set_field(temp_beets_library, second.id, "mood", "sad, happy")
+        set_field(temp_beets_library, item_id(first), "mood", "sad")
+        set_field(temp_beets_library, item_id(second), "mood", "sad, happy")
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
         async with app.run_test() as pilot:
             panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
             assert panel.confirm_active is True
-            assert panel.confirm_prompt.render().plain == (
+            assert rendered_text(panel.confirm_prompt) == (
                 "Delete 'sad' from 2 tracks? y/n"
             )
             assert app.focused is panel.confirm_prompt
@@ -1014,7 +1028,7 @@ class TestRemoveOptionFlow:
         app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
         async with app.run_test() as pilot:
             panel = await start_edit(app, pilot, EditKind.REMOVE_OPTION, index=1)
-            assert panel.confirm_prompt.render().plain == (
+            assert rendered_text(panel.confirm_prompt) == (
                 "Delete 'sad' from 0 tracks? y/n"
             )
 
@@ -1023,8 +1037,8 @@ class TestRemoveOptionFlow:
         self, temp_beets_library: Library, tmp_path: Path
     ) -> None:
         first, second = tracks(temp_beets_library)[:2]
-        set_field(temp_beets_library, first.id, "mood", "sad")
-        set_field(temp_beets_library, second.id, "mood", "sad, happy")
+        set_field(temp_beets_library, item_id(first), "mood", "sad")
+        set_field(temp_beets_library, item_id(second), "mood", "sad, happy")
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(temp_beets_library, {"mood": ["happy", "sad", "calm"]}, path)
         async with app.run_test() as pilot:
@@ -1035,10 +1049,10 @@ class TestRemoveOptionFlow:
             assert prompts(panel.selection_list) == ["happy", "calm"]
             assert panel.selection_list.highlighted == 1
             assert panel.selection_list.selected == []
-            assert app.item.get("mood") is None
+            assert current_item(app).get("mood") is None
             assert app.focused is panel.selection_list
-        assert "mood" not in temp_beets_library.get_item(first.id)
-        assert temp_beets_library.get_item(second.id).get("mood") == "happy"
+        assert "mood" not in stored_item(temp_beets_library, item_id(first))
+        assert stored_item(temp_beets_library, item_id(second)).get("mood") == "happy"
         assert read_definitions_file(path).options("mood") == ["happy", "calm"]
 
     @pytest.mark.asyncio
@@ -1100,23 +1114,23 @@ class TestRenameCategoryFlow:
         self, temp_beets_library: Library
     ) -> None:
         first, second = tracks(temp_beets_library)[:2]
-        set_field(temp_beets_library, first.id, "mood", "happy")
-        set_field(temp_beets_library, second.id, "mood", "happy")
+        set_field(temp_beets_library, item_id(first), "mood", "happy")
+        set_field(temp_beets_library, item_id(second), "mood", "happy")
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
             mood = await start_edit(app, pilot, EditKind.RENAME_CATEGORY)
             await submit(app, pilot, *"feel")
-            assert mood.confirm_prompt.render().plain == (
+            assert rendered_text(mood.confirm_prompt) == (
                 "Rename category 'mood' to 'feel' on 2 tracks? y/n"
             )
             await answer(app, pilot, "y")
             feel = panel_of(app, "feel")
             assert feel.selection_list.selected == ["happy"]
-            assert app.item.get("feel") == "happy"
-            assert "mood" not in app.item
+            assert current_item(app).get("feel") == "happy"
+            assert "mood" not in current_item(app)
             assert app.focused is feel.selection_list
-        assert temp_beets_library.get_item(second.id).get("feel") == "happy"
-        assert "mood" not in temp_beets_library.get_item(second.id)
+        assert stored_item(temp_beets_library, item_id(second)).get("feel") == "happy"
+        assert "mood" not in stored_item(temp_beets_library, item_id(second))
 
     @pytest.mark.asyncio
     async def test_case_only_rename_is_a_plain_rename(
@@ -1136,7 +1150,7 @@ class TestRenameCategoryFlow:
         """Moving every album title into a flex attr and blanking the field
         is not a rename anyone wants from one keystroke."""
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "grouping", "Live")
+        set_field(temp_beets_library, item_id(first), "grouping", "Live")
         app = make_app(temp_beets_library, {"grouping": ["Live"]})
         async with app.run_test() as pilot:
             panel = await start_edit(app, pilot, EditKind.RENAME_CATEGORY, "grouping")
@@ -1144,7 +1158,7 @@ class TestRenameCategoryFlow:
             assert "built-in beets field" in header_text(app)
             assert app.focused is panel.selection_list
             assert app.definitions.categories == ["grouping"]
-        assert temp_beets_library.get_item(first.id).get("grouping") == "Live"
+        assert stored_item(temp_beets_library, item_id(first)).get("grouping") == "Live"
 
     @needs_list_field
     @pytest.mark.asyncio
@@ -1152,20 +1166,20 @@ class TestRenameCategoryFlow:
         self, temp_beets_library: Library
     ) -> None:
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "genre", "House, Techno")
+        set_field(temp_beets_library, item_id(first), "genre", "House, Techno")
         app = make_app(temp_beets_library, {"genre": ["House", "Techno"]})
         async with app.run_test() as pilot:
             genre = await start_edit(app, pilot, EditKind.RENAME_CATEGORY, "genre")
             await pilot.press("end", "s", "enter")
             await settle(app, pilot)
             assert "Rename category 'genre' to 'genres' on 1 tracks" in (
-                genre.confirm_prompt.render().plain
+                rendered_text(genre.confirm_prompt)
             )
             await answer(app, pilot, "y")
             assert app.definitions.categories == [LIST_FIELD]
             genres = panel_of(app, LIST_FIELD)
             assert sorted(genres.selection_list.selected) == ["House", "Techno"]
-        item = temp_beets_library.get_item(first.id)
+        item = stored_item(temp_beets_library, item_id(first))
         assert item[LIST_FIELD] == ["House", "Techno"]
         assert not item.get("genre")
 
@@ -1176,11 +1190,11 @@ class TestRemoveCategoryFlow:
         self, temp_beets_library: Library
     ) -> None:
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "happy")
+        set_field(temp_beets_library, item_id(first), "mood", "happy")
         app = make_app(temp_beets_library, {"mood": ["happy"]})
         async with app.run_test() as pilot:
             panel = await start_edit(app, pilot, EditKind.REMOVE_CATEGORY)
-            assert panel.confirm_prompt.render().plain == (
+            assert rendered_text(panel.confirm_prompt) == (
                 "Delete category 'mood' and its values from 1 tracks? y/n"
             )
             assert app.focused is panel.confirm_prompt
@@ -1190,7 +1204,7 @@ class TestRemoveCategoryFlow:
         self, temp_beets_library: Library, tmp_path: Path
     ) -> None:
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "mood", "happy")
+        set_field(temp_beets_library, item_id(first), "mood", "happy")
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(
             temp_beets_library,
@@ -1206,8 +1220,8 @@ class TestRemoveCategoryFlow:
                 "panel-zest",
             ]
             assert app.focused is app.query_one("#selection-vibe")
-            assert "mood" not in app.item
-        assert "mood" not in temp_beets_library.get_item(first.id)
+            assert "mood" not in current_item(app)
+        assert "mood" not in stored_item(temp_beets_library, item_id(first))
         assert read_definitions_file(path).categories == ["vibe", "zest"]
 
     @pytest.mark.asyncio
@@ -1242,23 +1256,23 @@ class TestRemoveCategoryFlow:
         """The field holds data quicktag did not put there; one keystroke
         plus ``y`` must not blank it across the library."""
         first = tracks(temp_beets_library)[0]
-        set_field(temp_beets_library, first.id, "grouping", "Live")
+        set_field(temp_beets_library, item_id(first), "grouping", "Live")
         path = tmp_path / "quicktag_categories.yaml"
         app = make_app(
             temp_beets_library, {"grouping": ["Live"], "mood": ["happy"]}, path
         )
         async with app.run_test() as pilot:
             panel = await start_edit(app, pilot, EditKind.REMOVE_CATEGORY, "grouping")
-            assert panel.confirm_prompt.render().plain == (
+            assert rendered_text(panel.confirm_prompt) == (
                 "Remove category 'grouping'? It is a built-in beets field, so "
                 "every track keeps its value. y/n"
             )
             await answer(app, pilot, "y")
             assert app.definitions.categories == ["mood"]
             assert [p.id for p in app.query(CategoryPanel)] == ["panel-mood"]
-            assert app.item.get("grouping") == "Live"
+            assert current_item(app).get("grouping") == "Live"
             assert app.focused is app.query_one("#selection-mood")
             await pilot.press("right")
             await pilot.pause()
-        assert temp_beets_library.get_item(first.id).get("grouping") == "Live"
+        assert stored_item(temp_beets_library, item_id(first)).get("grouping") == "Live"
         assert read_definitions_file(path).categories == ["mood"]
