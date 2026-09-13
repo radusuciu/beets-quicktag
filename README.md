@@ -83,7 +83,7 @@ quicktag:
       - angry
 ```
 
-Categories live in a YAML file, `quicktag_categories.yaml` next to your beets `config.yaml` by default. On the first run the file is created from the `categories` section above and a message says so; from then on the file is what counts and the `categories` section is ignored. The file has the same shape as the config section (name → list of values) and can be edited by hand, or from the TUI with `+`, `F2`, `Delete`, `Ctrl+N`, `Ctrl+R` and `Ctrl+D`. Key order is display order. If the file cannot be parsed, `beet quicktag` stops and prints the path and the error rather than overwriting it.
+Categories live in a YAML file, `quicktag_categories.yaml` next to your beets `config.yaml` by default. On the first run the file is created from the `categories` section above and a message says so; from then on the file is what counts and the `categories` section is ignored. The file has the same shape as the config section (name → list of values) and can be edited by hand, or from the TUI with `+`, `F2`, `Delete`, `Ctrl+N`, `Ctrl+R` and `Ctrl+D`. Key order is display order, and so is value order unless `sort_options` is on. If the file cannot be parsed, `beet quicktag` stops and prints the path and the error rather than overwriting it.
 
 Category names may only contain letters, digits, underscores and hyphens, cannot start with a digit, and cannot be `comments`. From the TUI a built-in beets field name is refused, except `genres`; a file or config that already names a built-in text field (for example `album`) is accepted with a warning at startup. Other list-valued fields such as `artists` and `albumtypes` are refused everywhere, because beets keeps them in step with companion fields. Names and values must be unique within their list ignoring case. Values cannot contain commas, and `genres` values cannot contain `; `, which beets uses to separate them.
 
@@ -96,6 +96,7 @@ Category names may only contain letters, digits, underscores and hyphens, cannot
 | `autonext_at_track_end` | `no` | Move to the next track when the current one finishes. |
 | `autosave_on_quit` | `no` | Save the current track's tags on quit. |
 | `keep_audio_device_awake` | `no` | Loop silence at zero volume so the audio device never suspends. Fixes choppy resume on some setups, such as WSLg. |
+| `sort_options` | `no` | Show each category's values sorted, ignoring case, whatever order the file has them in. A value added or renamed from the TUI lands in its sorted place, and the file is written sorted the next time it is saved. Category order is left alone. |
 
 ## Development
 

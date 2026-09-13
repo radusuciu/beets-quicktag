@@ -19,6 +19,7 @@ DEFAULT_CONFIG: dict[str, object] = {
     "autosave_on_quit": False,
     "keep_playing_on_track_change_if_playing": True,
     "keep_audio_device_awake": False,
+    "sort_options": False,
 }
 
 
@@ -54,7 +55,11 @@ class QuickTagPlugin(BeetsPlugin):
         seed = self.config["categories"].get(dict)
 
         try:
-            definitions, created = load_or_seed(definitions_path, seed)
+            definitions, created = load_or_seed(
+                definitions_path,
+                seed,
+                sort_options=self.config["sort_options"].get(bool),
+            )
         except DefinitionsFileError as error:
             raise ui.UserError(
                 f"quicktag: cannot read categories file: {error}"

@@ -831,3 +831,68 @@ class TestAddCategoryScrolling:
             await pilot.pause()
             assert app.focused is last.input
             assert screen.can_view_entire(last.input)
+
+
+class TestSortedOptions:
+    """With ``sort_options`` on, the list shows values in sorted order."""
+
+    @pytest.mark.asyncio
+    async def test_panel_inserts_at_index_keeping_selections(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["happy", "sad"]})
+        async with app.run_test():
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            lst = panel.selection_list
+            lst.select("sad")
+            panel.add_option("calm", select=True, index=0)
+            panel.add_option("jazzy", select=False, index=2)
+            assert prompts(lst) == ["calm", "happy", "jazzy", "sad"]
+            assert sorted(lst.selected) == ["calm", "sad"]
+            assert lst.highlighted == 2
+
+    @pytest.mark.asyncio
+    async def test_plus_inserts_the_new_value_in_sorted_position(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(
+            temp_beets_library, {"mood": ["sad", "happy"]}, path, sort_options=True
+        )
+        async with app.run_test() as pilot:
+            panel = app.query_one("#panel-mood", CategoryPanel)
+            lst = panel.selection_list
+            assert prompts(lst) == ["happy", "sad"]
+            lst.select("sad")
+            await pilot.press("plus", "L", "a", "z", "y", "enter")
+            assert prompts(lst) == ["happy", "Lazy", "sad"]
+            assert sorted(lst.selected) == ["Lazy", "sad"]
+            assert lst.highlighted == 1
+            assert app.focused is lst
+        assert read_definitions_file(path).options("mood") == ["happy", "Lazy", "sad"]
+
+    @pytest.mark.asyncio
+    async def test_adopted_value_is_inserted_in_sorted_position(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        item = next(iter(temp_beets_library.items()))
+        item["mood"] = "Jazzy"
+        item.store()
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(
+            temp_beets_library, {"mood": ["sad", "happy"]}, path, sort_options=True
+        )
+        async with app.run_test():
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            assert prompts(lst) == ["happy", "Jazzy", "sad"]
+            assert lst.selected == ["Jazzy"]
+        assert read_definitions_file(path).options("mood") == ["happy", "Jazzy", "sad"]
+
+    @pytest.mark.asyncio
+    async def test_file_order_is_shown_when_off(
+        self, temp_beets_library: Library
+    ) -> None:
+        app = make_app(temp_beets_library, {"mood": ["sad", "happy"]})
+        async with app.run_test():
+            lst = app.query_one("#selection-mood", CustomSelectionList)
+            assert prompts(lst) == ["sad", "happy"]

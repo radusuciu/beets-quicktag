@@ -1262,3 +1262,23 @@ class TestRemoveCategoryFlow:
             await pilot.pause()
         assert temp_beets_library.get_item(first.id).get("grouping") == "Live"
         assert read_definitions_file(path).categories == ["mood"]
+
+
+class TestSortedOptionRename:
+    @pytest.mark.asyncio
+    async def test_renamed_option_moves_and_stays_highlighted(
+        self, temp_beets_library: Library, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "quicktag_categories.yaml"
+        app = make_app(
+            temp_beets_library,
+            {"mood": ["calm", "happy", "sad"]},
+            path,
+            sort_options=True,
+        )
+        async with app.run_test() as pilot:
+            panel = await start_edit(app, pilot, EditKind.RENAME_OPTION, index=0)
+            await submit(app, pilot, "z", "e", "n")
+            assert prompts(panel.selection_list) == ["happy", "sad", "zen"]
+            assert panel.selection_list.highlighted == 2
+        assert read_definitions_file(path).options("mood") == ["happy", "sad", "zen"]
