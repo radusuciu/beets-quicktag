@@ -12,6 +12,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: pypi
     
     steps:
     - uses: actions/checkout@v4
@@ -62,7 +63,7 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git fetch origin main
-        git checkout -- CHANGELOG.md
+        rm -f CHANGELOG.md
         git checkout -B main origin/main
         uv run git-cliff --output CHANGELOG.md
         git add CHANGELOG.md
