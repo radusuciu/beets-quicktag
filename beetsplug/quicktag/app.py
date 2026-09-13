@@ -67,9 +67,14 @@ class HeaderWidget(Vertical):
     }
     """
 
-    def __init__(self, playback_widget: PlaybackWidget, item=None, **kwargs):
+    def __init__(
+        self,
+        playback_widget: PlaybackWidget,
+        item: BeetsItem | None = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
-        self.item: BeetsItem = item
+        self.item: BeetsItem | None = item
         # A message replaces the title line until it is cleared; the title
         # is re-rendered underneath it, never over it.
         self._message: str | None = None
@@ -171,7 +176,7 @@ class QuickTagApp(App):
     def __init__(
         self,
         lib: BeetsLibrary,
-        items: BeetsResults | Sequence[BeetsItem],
+        items: BeetsResults[BeetsItem] | Sequence[BeetsItem],
         definitions: CategoryDefinitions,
         autoplay_on_track_change_enabled: bool,
         autoplay_at_launch_enabled: bool,
@@ -196,7 +201,7 @@ class QuickTagApp(App):
         )
 
         self.current_item_index = 0
-        self.item = items[0] if items else None
+        self.item: BeetsItem | None = items[0] if items else None
         # Stored values the model refuses as options (e.g. they contain a
         # comma). Kept per category so a save writes them back untouched
         # instead of deleting them from the track.
@@ -214,9 +219,10 @@ class QuickTagApp(App):
         """Called when the app is mounted."""
         self.theme = "gruvbox"
         self._set_terminal_title(FALLBACK_TERMINAL_TITLE)
-        await self._set_item(
-            self.item, save_current_item_tags=False, is_initial_load=True
-        )
+        if self.item is not None:
+            await self._set_item(
+                self.item, save_current_item_tags=False, is_initial_load=True
+            )
         if self.autoplay_at_launch_enabled:
             self.playback_widget.play()
 
@@ -471,7 +477,7 @@ class QuickTagApp(App):
         must leave it exactly as it was.
         """
         shown = self._shown_values(category)
-        if shown is None:
+        if shown is None or self.item is None:
             return await self._off_loop(
                 partial(count_tracks, self.lib, category, value)
             )
@@ -730,17 +736,16 @@ class QuickTagApp(App):
     async def _load_current_item_for_playback(self) -> None:
         """Load the current item for playback."""
 
-        item_path_bytes = self.item.path
+        if self.item is None:
+            return
 
         try:
-            item_path_str = item_path_bytes.decode("utf-8", "surrogateescape")
-        except AttributeError:
-            item_path_str = item_path_bytes
+            item_path = self.item.path.decode("utf-8", "surrogateescape")
         except Exception as e:
             self.log.error(f"Error decoding item path: {e}")
             return
 
-        self.playback_widget.load_track(item_path_str)
+        self.playback_widget.load_track(item_path)
 
     async def _set_item(
         self,
@@ -1093,6 +1098,8 @@ class QuickTagApp(App):
         Returns ``True`` when the definitions changed; persisting them is
         the caller's job.
         """
+        if self.item is None:
+            return False
         try:
             selection_list = self._selection_list(category_name)
         except NoMatches:
@@ -1136,7 +1143,7 @@ class QuickTagApp(App):
         """
         if self.item is None:
             return
-        ids = [item.id for item in self.items]
+        ids = [item.id for item in self.items if item.id is not None]
         by_id = {
             item.id: item for item in await self._off_loop(partial(self._fetch, ids))
         }
