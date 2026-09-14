@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Self
 
 from beets.dbcore.types import String
@@ -27,6 +28,57 @@ RESERVED_NAMES = frozenset({"comments"})
 # by the importer, so editing one of them alone would misalign the pair.
 SUPPORTED_LIST_FIELDS = frozenset({"genres"})
 
+# ``low..high``, the shape a scale category has in the file and the config.
+SCALE_PATTERN = re.compile(r"^\s*(\d+)\s*\.\.\s*(\d+)\s*$")
+SCALE_LOW_MIN = 0
+SCALE_HIGH_MAX = 10
+
+
+@dataclass(frozen=True)
+class Scale:
+    """A category whose value is one integer from ``low`` to ``high``.
+
+    At most eleven steps (``0..10``): they fit on one row, and the digit
+    keys reach every value except 10.
+    """
+
+    low: int
+    high: int
+
+    def __post_init__(self) -> None:
+        if not (SCALE_LOW_MIN <= self.low < self.high <= SCALE_HIGH_MAX):
+            raise ValueError(
+                "A scale must be low..high with "
+                f"{SCALE_LOW_MIN} <= low < high <= {SCALE_HIGH_MAX}, "
+                f"not {self.low}..{self.high}."
+            )
+
+    @classmethod
+    def parse(cls, text: str) -> Scale | None:
+        """The scale ``text`` spells (``"1..5"``), or ``None`` when ``text``
+        is not a range at all. A range outside the limits raises."""
+        match = SCALE_PATTERN.fullmatch(text)
+        if match is None:
+            return None
+        return cls(int(match.group(1)), int(match.group(2)))
+
+    def spec(self) -> str:
+        """The ``low..high`` spelling used in the file."""
+        return f"{self.low}..{self.high}"
+
+    def steps(self) -> range:
+        return range(self.low, self.high + 1)
+
+    def parse_value(self, text: str | None) -> int | None:
+        """``text`` as an integer inside the scale, else ``None``."""
+        if text is None:
+            return None
+        try:
+            value = int(text.strip())
+        except ValueError:
+            return None
+        return value if value in self.steps() else None
+
 
 def find_case_insensitive(values: Sequence[str], needle: str) -> int | None:
     """Index of the first entry equal to ``needle`` ignoring case, or ``None``.
@@ -42,7 +94,8 @@ def find_case_insensitive(values: Sequence[str], needle: str) -> int | None:
 
 
 class CategoryDefinitions:
-    """Ordered mapping of category name -> ordered list of option values.
+    """Ordered mapping of category name -> ordered list of option values,
+    or a :class:`Scale`.
 
     With ``sort_options`` every option list is kept sorted ignoring case,
     whatever order it was loaded or edited in; category order is never
@@ -50,7 +103,7 @@ class CategoryDefinitions:
     """
 
     def __init__(self, *, sort_options: bool = False) -> None:
-        self._categories: dict[str, list[str]] = {}
+        self._categories: dict[str, list[str] | Scale] = {}
         self.sort_options = sort_options
 
     # ---- read access -----------------------------------------------------
@@ -61,8 +114,19 @@ class CategoryDefinitions:
         return list(self._categories)
 
     def options(self, category: str) -> list[str]:
-        """Option values of ``category`` in display order (a copy)."""
-        return list(self._require_category(category))
+        """Option values of ``category`` in display order (a copy).
+
+        Raises ``ValueError`` for a scale, which has no options.
+        """
+        return list(self._require_options(category))
+
+    def scale(self, category: str) -> Scale | None:
+        """The scale of ``category``, or ``None`` for a list category."""
+        value = self._require_category(category)
+        return value if isinstance(value, Scale) else None
+
+    def is_scale(self, category: str) -> bool:
+        return self.scale(category) is not None
 
     def find_option(self, category: str, value: str) -> str | None:
         """The option of ``category`` matching ``value`` case-insensitively.
@@ -70,14 +134,17 @@ class CategoryDefinitions:
         Returns the *stored* spelling (so a track holding ``HAPPY`` maps onto
         the defined ``happy``), or ``None`` when nothing matches.
         """
-        options = self._require_category(category)
+        options = self._require_options(category)
         index = find_case_insensitive(options, value)
         return None if index is None else options[index]
 
     def copy(self) -> Self:
         """An independent copy, to plan an edit on before it is applied."""
         clone = type(self)(sort_options=self.sort_options)
-        clone._categories = self.to_mapping()
+        clone._categories = {
+            name: value if isinstance(value, Scale) else list(value)
+            for name, value in self._categories.items()
+        }
         return clone
 
     # ---- construction from / export to a plain mapping -----------------------
@@ -105,11 +172,20 @@ class CategoryDefinitions:
                 # A bare ``name:`` line; the writer spells it ``name: []``.
                 raw_options = []
             if isinstance(raw_options, str):
-                raise ValueError(
-                    f"Category '{name}' options must be a list of strings, "
-                    f"e.g. '{name}: [{raw_options}, other_option]', not a "
-                    f"bare string '{raw_options}'."
-                )
+                try:
+                    scale = Scale.parse(raw_options)
+                except ValueError as error:
+                    raise ValueError(f"Category '{name}': {error}") from None
+                if scale is None:
+                    raise ValueError(
+                        f"Category '{name}' must be a list of options, e.g. "
+                        f"'{name}: [{raw_options}, other_option]', or a scale "
+                        f"such as '{name}: 1..5', not a bare string "
+                        f"'{raw_options}'."
+                    )
+                defs._require_flexible(name)
+                defs._categories[name] = scale
+                continue
             if not isinstance(raw_options, list | tuple):
                 raise ValueError(
                     f"Category '{name}' options must be a list of strings."
@@ -123,9 +199,13 @@ class CategoryDefinitions:
             defs._categories[name] = options
         return defs
 
-    def to_mapping(self) -> dict[str, list[str]]:
-        """The YAML-shaped mapping (copies), in display order."""
-        return {name: list(options) for name, options in self._categories.items()}
+    def to_mapping(self) -> dict[str, list[str] | str]:
+        """The YAML-shaped mapping (copies), in display order: a list of
+        options per list category, ``low..high`` per scale."""
+        return {
+            name: value.spec() if isinstance(value, Scale) else list(value)
+            for name, value in self._categories.items()
+        }
 
     def fixed_field_warnings(self) -> list[str]:
         """One warning per category that is a non-list fixed beets field."""
@@ -202,6 +282,13 @@ class CategoryDefinitions:
         self._categories[name] = []
         return name
 
+    def add_scale(self, name: str, scale: Scale) -> str:
+        """Append a new scale category. Returns the normalized name."""
+        name = self._validate_new_name(name, current=None, loaded=False)
+        self._require_flexible(name)
+        self._categories[name] = scale
+        return name
+
     def rename_category(self, old: str, new: str) -> str:
         """Rename ``old`` to ``new`` keeping its position and options.
 
@@ -209,6 +296,8 @@ class CategoryDefinitions:
         """
         self._require_category(old)
         new = self._validate_new_name(new, current=old, loaded=False)
+        if isinstance(self._categories[old], Scale):
+            self._require_flexible(new)
         self._categories = {
             (new if key == old else key): value
             for key, value in self._categories.items()
@@ -223,7 +312,7 @@ class CategoryDefinitions:
 
     def add_option(self, category: str, value: str) -> str:
         """Append ``value`` to ``category``. Returns the normalized value."""
-        options = self._require_category(category)
+        options = self._require_options(category)
         value = self._validate_option(category, value, options)
         options.append(value)
         self._sort(options)
@@ -236,7 +325,7 @@ class CategoryDefinitions:
         old entry is dropped and the existing entry keeps its position and
         spelling. Returns the spelling the option has afterwards.
         """
-        options = self._require_category(category)
+        options = self._require_options(category)
         index = self._require_option(category, options, old)
         new = self._validate_option_shape(category, new)
         target = find_case_insensitive(options, new)
@@ -248,7 +337,7 @@ class CategoryDefinitions:
         return new
 
     def remove_option(self, category: str, value: str) -> None:
-        options = self._require_category(category)
+        options = self._require_options(category)
         del options[self._require_option(category, options, value)]
 
     # ---- helpers ------------------------------------------------------------
@@ -258,11 +347,27 @@ class CategoryDefinitions:
         if self.sort_options:
             options.sort(key=str.casefold)
 
-    def _require_category(self, category: str) -> list[str]:
+    def _require_category(self, category: str) -> list[str] | Scale:
         try:
             return self._categories[category]
         except KeyError:
             raise ValueError(f"No category named '{category}'.") from None
+
+    def _require_options(self, category: str) -> list[str]:
+        value = self._require_category(category)
+        if isinstance(value, Scale):
+            raise ValueError(
+                f"'{category}' is a scale ({value.spec()}); it has no options."
+            )
+        return value
+
+    @classmethod
+    def _require_flexible(cls, name: str) -> None:
+        """A scale is always a flexible attribute, never a built-in field."""
+        if cls.is_fixed_field(name):
+            raise ValueError(
+                f"'{name}' is a built-in beets field; a scale must be a new field name."
+            )
 
     @staticmethod
     def _require_option(category: str, options: list[str], value: str) -> int:

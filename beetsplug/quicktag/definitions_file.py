@@ -1,7 +1,8 @@
 """Persistence of :class:`CategoryDefinitions` as a YAML file.
 
 The file has the same shape as the ``quicktag.categories`` config section
-(a mapping of category name -> list of options), so it is hand-editable.
+(a mapping of category name -> list of options, or ``low..high`` for a
+scale), so it is hand-editable.
 Key order is display order. Writes go through a temporary file in the same
 directory followed by ``os.replace`` so a crash cannot leave a half-written
 file behind.
@@ -44,7 +45,9 @@ def read_definitions_file(
         data = {}
     if not isinstance(data, Mapping):
         raise DefinitionsFileError(
-            path, "expected a mapping of category name -> list of options."
+            path,
+            "expected a mapping of category name -> list of options or "
+            "low..high scale.",
         )
     try:
         return CategoryDefinitions.from_config(data, sort_options=sort_options)

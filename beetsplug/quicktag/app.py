@@ -15,9 +15,14 @@ from textual.dom import NoMatches
 from textual.widgets import Footer, Input, Static
 from textual.worker import WorkerFailed
 
-from .definitions import CategoryDefinitions, find_case_insensitive
+from .definitions import CategoryDefinitions, Scale, find_case_insensitive
 from .definitions_file import write_definitions_file
-from .item_values import read_item_values, write_item_values
+from .item_values import (
+    read_item_values,
+    read_scale_value,
+    write_item_values,
+    write_scale_value,
+)
 from .library_ops import (
     count_tracks,
     remove_category,
@@ -25,16 +30,19 @@ from .library_ops import (
     rename_category,
     rename_option,
 )
-from .widgets.category_panel import CategoryPanel
+from .widgets.category_panel import CategoryPanel, ScalePanel
 from .widgets.custom_selection_list import CustomSelectionList, EditKind
 from .widgets.inline_input import InlineInput
 from .widgets.input_with_label import InputWithLabel
 from .widgets.playback import PlaybackEnded, PlaybackStateChanged, PlaybackWidget
+from .widgets.scale_picker import ScalePicker
 
 # Terminal window title whenever nothing is audibly playing.
 FALLBACK_TERMINAL_TITLE = "Beets QuickTag"
 
-CATEGORY_PLACEHOLDER = "New category name, Enter to add, Esc to cancel"
+CATEGORY_PLACEHOLDER = (
+    "New category name, or name: 1..5 for a scale; Enter to add, Esc to cancel"
+)
 
 
 # Control characters (C0 plus DEL) in metadata could terminate or extend the
@@ -263,6 +271,27 @@ class QuickTagApp(App):
         """The panel for ``category``; raises ``NoMatches``."""
         return self.query_one(f"#panel-{category}", CategoryPanel)
 
+    def _picker(self, category: str) -> ScalePicker:
+        """The picker for the scale ``category``; raises ``NoMatches``."""
+        return self.query_one(f"#scale-{category}", ScalePicker)
+
+    def _make_panel(self, category: str) -> CategoryPanel:
+        """The panel kind ``category`` needs: a picker for a scale, else a list."""
+        scale = self.definitions.scale(category)
+        if scale is not None:
+            return ScalePanel(category, scale)
+        return CategoryPanel(category, self.definitions.options(category))
+
+    def _focus_first_panel(self) -> bool:
+        """Focus the first category's value widget; False when there is none."""
+        if not self.definitions.categories:
+            return False
+        try:
+            self._panel(self.definitions.categories[0]).focus_body()
+        except NoMatches:
+            return False
+        return True
+
     def _persist_definitions(self) -> None:
         """Write the definitions file if one is configured.
 
@@ -288,9 +317,7 @@ class QuickTagApp(App):
 
         if self.item:
             for category_name in self.definitions.categories:
-                yield CategoryPanel(
-                    category_name, self.definitions.options(category_name)
-                )
+                yield self._make_panel(category_name)
             yield InlineInput(id="new-category-input", placeholder=CATEGORY_PLACEHOLDER)
             yield InputWithLabel(input_label="Comments:", id="comments-input")
         else:
@@ -495,11 +522,20 @@ class QuickTagApp(App):
         """The current track's ``category`` values as the screen has them.
 
         Selected options plus the values the track carries that could not
-        become options: exactly what a save would write. ``None`` when
-        there is no track or no list for ``category``.
+        become options: exactly what a save would write. For a scale: the
+        picked value, or the foreign stored text, as a one-item list.
+        ``None`` when there is no track or no widget for ``category``.
         """
         if not self.item:
             return None
+        if self.definitions.is_scale(category):
+            try:
+                picker = self._picker(category)
+            except NoMatches:
+                return None
+            if picker.foreign is not None:
+                return [picker.foreign]
+            return [] if picker.value is None else [str(picker.value)]
         try:
             selected = list(self._selection_list(category).selected)
         except NoMatches:
@@ -552,11 +588,11 @@ class QuickTagApp(App):
         changed = await self._apply_edit(planned, migrate)
         if changed is None:
             return
-        replacement = CategoryPanel(new, self.definitions.options(new))
+        replacement = self._make_panel(new)
         await self.mount(replacement, before=panel)
         await panel.remove()
         await self._refresh_tracks(changed)
-        replacement.selection_list.focus()
+        replacement.focus_body()
 
     async def _remove_category(
         self,
@@ -574,7 +610,7 @@ class QuickTagApp(App):
         remaining = list(self.query(CategoryPanel))
         if remaining:
             # The panel that took the removed one's place, or the last one.
-            remaining[min(index, len(remaining) - 1)].selection_list.focus()
+            remaining[min(index, len(remaining) - 1)].focus_body()
         else:
             self._focus_after_closing_category_input()
 
@@ -671,19 +707,35 @@ class QuickTagApp(App):
         event.stop()
         new_category_input = self._new_category_input()
         try:
-            name = self.definitions.add_category(event.value)
+            name = self._add_category_from_input(event.value)
         except ValueError as error:
             new_category_input.show_error(str(error))
             return
-        panel = CategoryPanel(name, [])
+        panel = self._make_panel(name)
         await self.mount(panel, before=new_category_input)
         # The track may already carry values for this field; show them (and
         # adopt unknown ones) so the first save keeps them instead of
         # writing an empty selection over them.
-        self._load_category_values(name)
+        if self.definitions.is_scale(name):
+            self._load_scale_value(name)
+        else:
+            self._load_category_values(name)
         self._persist_definitions()
         new_category_input.close()
-        panel.selection_list.focus()
+        panel.focus_body()
+
+    def _add_category_from_input(self, text: str) -> str:
+        """Add what the new-category input holds and return the normalized
+        name: ``name`` makes a list category, ``name: low..high`` a scale."""
+        name, colon, spec = text.partition(":")
+        if not colon:
+            return self.definitions.add_category(text)
+        scale = Scale.parse(spec)
+        if scale is None:
+            raise ValueError(
+                f"'{spec.strip()}' is not a scale; write low..high, e.g. 1..5."
+            )
+        return self.definitions.add_scale(name, scale)
 
     async def action_cancel_or_quit(self) -> None:
         """Escape: cancel an open inline edit if there is one, else quit."""
@@ -729,12 +781,8 @@ class QuickTagApp(App):
         With no categories yet there is no list, and the comments field is
         the only other place focus can sensibly go.
         """
-        if self.definitions.categories:
-            try:
-                self._selection_list(self.definitions.categories[0]).focus()
-                return
-            except NoMatches:
-                pass
+        if self._focus_first_panel():
+            return
         try:
             comments = self.query_one("#comments-input", InputWithLabel)
         except NoMatches:
@@ -789,11 +837,8 @@ class QuickTagApp(App):
         await self._load_tags_for_current_item()
         self.log.info(f"Item set to: {item.artist} - {item.title}")
 
-        if self.definitions.categories and not self._inline_edit_active():
-            try:
-                self._selection_list(self.definitions.categories[0]).focus()
-            except NoMatches:
-                pass
+        if not self._inline_edit_active():
+            self._focus_first_panel()
 
         # Load the new track (this doesn't start playback automatically)
         await self._load_current_item_for_playback()
@@ -983,6 +1028,10 @@ class QuickTagApp(App):
         changed = False
         ok = True
         for category_name in self.definitions.categories:
+            if self.definitions.is_scale(category_name):
+                if self._save_scale_value(category_name):
+                    changed = True
+                continue
             try:
                 selection_list = self._selection_list(category_name)
             except NoMatches:
@@ -1069,6 +1118,29 @@ class QuickTagApp(App):
             )
         return ok
 
+    def _save_scale_value(self, category: str) -> bool:
+        """Write the picker's value; True when the track changed.
+
+        A foreign value (stored text outside the scale) is left untouched:
+        the user has not chosen anything yet, and overwriting it would
+        silently drop data, so only picking a value or clearing replaces it.
+        """
+        if self.item is None:
+            return False
+        try:
+            picker = self._picker(category)
+        except NoMatches:
+            self.log.error(f"Could not find picker for scale {category} during save.")
+            return False
+        if picker.foreign is not None:
+            return False
+        written = write_scale_value(self.item, category, picker.value)
+        if written:
+            self.log.info(
+                f"Updating {category} to {picker.value!r} for {self.item.title}"
+            )
+        return written
+
     async def _load_tags_for_current_item(self) -> None:
         """Loads the tags for the current item into the selection lists."""
         # TODO: I think we should validate earlier that we have a valid items
@@ -1078,6 +1150,9 @@ class QuickTagApp(App):
         self._unadoptable_values = {}
         adopted_any = False
         for category_name in self.definitions.categories:
+            if self.definitions.is_scale(category_name):
+                self._load_scale_value(category_name)
+                continue
             adopted_any = self._load_category_values(category_name) or adopted_any
         if adopted_any:
             # Once per track, not once per adopted value.
@@ -1094,6 +1169,17 @@ class QuickTagApp(App):
             comments_widget.value = current_comments
         except NoMatches:
             self.log.error("Could not find comments input for loading.")
+
+    def _load_scale_value(self, category: str) -> None:
+        """Show the current track's stored value on the scale's picker."""
+        if self.item is None:
+            return
+        try:
+            picker = self._picker(category)
+        except NoMatches:
+            self.log.error(f"Could not find picker for scale {category} during load.")
+            return
+        picker.load(read_scale_value(self.item, category))
 
     def _load_category_values(self, category_name: str) -> bool:
         """Select the current track's values for ``category_name`` in its list.

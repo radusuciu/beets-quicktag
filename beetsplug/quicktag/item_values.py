@@ -1,13 +1,15 @@
 """Read and write one category's values on a beets ``Item``.
 
-Three storage shapes exist:
+Four storage shapes exist:
 
 * flexible attribute: ``", "``-joined string; "empty" means the attribute
   is deleted;
 * fixed scalar field (e.g. ``comments``): ``", "``-joined string; "empty"
   is ``""``;
 * fixed list-valued field (e.g. ``genres``): a Python ``list[str]``;
-  "empty" is ``[]``.
+  "empty" is ``[]``;
+* scale category: the flexible attribute holds the number as text, ``"4"``;
+  "empty" means the attribute is deleted.
 
 Nothing here calls ``item.store()``; callers decide when to persist.
 """
@@ -64,6 +66,39 @@ def write_item_values(item: Item, category: str, values: list[str]) -> bool:
     if stored == sorted(value.casefold() for value in values):
         return False
     encoded = encode_values(category, values)
+    if encoded is None:
+        if category in item.keys(with_album=False):
+            del item[category]
+    else:
+        item[category] = encoded
+    return True
+
+
+def read_scale_value(item: Item, category: str) -> str | None:
+    """The text stored for the scale ``category`` on ``item`` itself.
+
+    ``None`` when unset or blank. The album fallback is skipped for the
+    same reason as in :func:`read_item_values`. Returned as text, not an
+    integer, so a value outside the scale can be shown back to the user.
+    """
+    raw = item.get(category, None, with_album=False)
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "ignore")
+    text = str(raw).strip()
+    return text or None
+
+
+def write_scale_value(item: Item, category: str, value: int | None) -> bool:
+    """Store ``value`` as text, or delete the attribute when ``None``.
+
+    Returns ``True`` when the item was modified; re-saving the stored value
+    is a no-op.
+    """
+    encoded = None if value is None else str(value)
+    if read_scale_value(item, category) == encoded:
+        return False
     if encoded is None:
         if category in item.keys(with_album=False):
             del item[category]

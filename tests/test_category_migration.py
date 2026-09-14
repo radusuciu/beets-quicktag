@@ -17,6 +17,7 @@ from beetsplug.quicktag.widgets.category_panel import CategoryPanel
 from beetsplug.quicktag.widgets.custom_selection_list import (
     CustomSelectionList,
     EditKind,
+    EditRequested,
 )
 from beetsplug.quicktag.widgets.input_with_label import InputWithLabel
 from beetsplug.quicktag.widgets.playback import PlaybackEnded
@@ -115,9 +116,7 @@ class ListHost(App[None]):
     def compose(self) -> ComposeResult:
         yield CustomSelectionList(*(Selection(v, v) for v in self._values))
 
-    def on_custom_selection_list_edit_requested(
-        self, message: CustomSelectionList.EditRequested
-    ) -> None:
+    def on_edit_requested(self, message: EditRequested) -> None:
         self.requests.append((message.kind, message.value))
 
 

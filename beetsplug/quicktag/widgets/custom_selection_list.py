@@ -16,21 +16,24 @@ class EditKind(Enum):
     REMOVE_CATEGORY = "remove_category"
 
 
+class EditRequested(Message):
+    """The user pressed an editing key on a category's widget.
+
+    Posted by the option list and by the scale picker; the panel above them
+    handles it. ``value`` is the highlighted option for the option kinds,
+    else None.
+    """
+
+    def __init__(self, kind: EditKind, value: str | None) -> None:
+        super().__init__()
+        self.kind = kind
+        self.value = value
+
+
 class CustomSelectionList(SelectionList):
     """
     A custom SelectionList that handles quick selection via alphanumeric key presses.
     """
-
-    class EditRequested(Message):
-        """The user pressed an editing key on this list.
-
-        ``value`` is the highlighted option for the option kinds, else None.
-        """
-
-        def __init__(self, kind: EditKind, value: str | None) -> None:
-            super().__init__()
-            self.kind = kind
-            self.value = value
 
     # SelectionList inherits hidden "scroll_left"/"scroll_right" bindings for
     # Left/Right from ScrollableContainer. They never scroll (OptionList has
@@ -66,9 +69,9 @@ class CustomSelectionList(SelectionList):
             if self.highlighted is None:
                 return
             value = self.get_option_at_index(self.highlighted).value
-            self.post_message(self.EditRequested(kind, str(value)))
+            self.post_message(EditRequested(kind, str(value)))
             return
-        self.post_message(self.EditRequested(kind, None))
+        self.post_message(EditRequested(kind, None))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
