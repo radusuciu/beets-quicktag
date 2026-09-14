@@ -1,0 +1,94 @@
+name: Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump (auto derives it from the commits since the last tag)
+        type: choice
+        default: auto
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_PR_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10
+
+    - name: Set up Python
+      run: uv python install 3.11
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Bump version
+      id: version
+      run: |
+        if [ "${{ inputs.bump }}" = auto ]; then
+          uv version "$(uv run git-cliff --bumped-version | sed 's/^v//')"
+        else
+          uv version --bump "${{ inputs.bump }}"
+        fi
+        version=$(uv version --short)
+        if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+          echo "::error::v$version is already tagged; nothing to release"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Generate changelog
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        uv run git-cliff --tag "v${{ steps.version.outputs.version }}" --output CHANGELOG.md
+        uv run git-cliff --tag "v${{ steps.version.outputs.version }}" --unreleased --strip all > RELEASE_NOTES.md
+
+    - name: Push release branch
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        git config user.name "${{ github.actor }}"
+        git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+        git checkout -b "release-v$VERSION"
+        git add pyproject.toml uv.lock CHANGELOG.md
+        git commit -m "chore(release): prepare for v$VERSION"
+        git push --force origin "release-v$VERSION"
+
+    - name: Open pull request
+      if: ${{ env.RELEASE_PR_TOKEN != '' }}
+      env:
+        GH_TOKEN: ${{ env.RELEASE_PR_TOKEN }}
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        url=$(gh pr create --base main --head "release-v$VERSION" \
+          --title "chore(release): prepare for v$VERSION" --body-file RELEASE_NOTES.md)
+        echo "Release PR: $url" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Link to open the pull request
+      if: ${{ env.RELEASE_PR_TOKEN == '' }}
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        {
+          echo "Branch \`release-v$VERSION\` is pushed. Open the pull request yourself so CI runs on it:"
+          echo
+          echo "${{ github.server_url }}/${{ github.repository }}/compare/main...release-v$VERSION?expand=1&title=chore(release)%3A%20prepare%20for%20v$VERSION"
+          echo
+          cat RELEASE_NOTES.md
+        } >> "$GITHUB_STEP_SUMMARY"
