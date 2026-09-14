@@ -88,10 +88,6 @@ mood:
   - sad
   - bright
   - dark
-energy:
-  - low
-  - medium
-  - high
 YAML
   (cd "$REPO" && BEETSDIR="$SCRATCH" uv run beet import -s -q "$SCRATCH/tracks" >/dev/null)
   echo "scratch library: $(cd "$REPO" && BEETSDIR="$SCRATCH" uv run beet ls 2>/dev/null | wc -l) tracks in $SCRATCH"
@@ -137,25 +133,22 @@ record() {
   # list, Enter appends the value and selects it for this track.
   key -l +;            pause 0.8
   type_text "euphoric"; pause 0.5; key Enter; pause 1.5
-  key Tab;             pause 0.6                 # energy
-  key h;    pause 0.3; key Space; pause 1.0      # high
-  # A whole new category: ctrl+n opens an input above the comments field,
-  # Enter adds an empty panel with focus on it, then + fills it in.
+  # A whole new category: ctrl+n opens an input above the comments field.
+  # "name: low..high" makes it a scale; Enter adds the panel with focus on
+  # it, and a digit picks that value.
   key C-n;             pause 0.8
-  type_text "vocals"; pause 0.5; key Enter; pause 1.2
-  key -l +;            pause 0.6
-  type_text "instrumental"; pause 0.5; key Enter; pause 1.5
+  type_text "energy: 1..5"; pause 0.5; key Enter; pause 1.2
+  key 5;               pause 1.5                 # energy: 5
   key Tab;             pause 0.6                 # comments
   type_text "peak time, everyone knows the riff"; pause 1.2
   key Tab;             pause 0.5                 # leave the field so Right changes track
   # Apollo. Tags are saved on the way out; the lists come up empty, but each
-  # keeps the row it had highlighted, and the new value and category are
+  # keeps the row it had highlighted, and the new value and the scale are
   # still there because they were written to the categories file.
   key Right;           pause 2.5
   key Space;           pause 0.8                 # collection: DJ
   key Tab;  pause 0.5; key e; pause 0.3; key Space; pause 0.8   # mood: euphoric
-  key Tab;  pause 0.5; key m; pause 0.3; key Space; pause 0.8   # energy: medium
-  key Tab;  pause 0.5; key Space; pause 1.5                     # vocals: instrumental
+  key Tab;  pause 0.5; key 3; pause 1.5                        # energy: 3
   key Escape                                     # quit, autosave_on_quit
   pause 1.5
   type_text "exit"; key Enter
