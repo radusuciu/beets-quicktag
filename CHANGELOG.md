@@ -4,59 +4,73 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.3.0] - 2026-09-14
+
+### Features
+
+- Add scale categories for ratings and energy levels by @radusuciu in [#36](https://github.com/radusuciu/beets-quicktag/pull/36)
+
+### Miscellaneous Tasks
+
+- Prepare releases through a pull request and publish on merge by @radusuciu in [#39](https://github.com/radusuciu/beets-quicktag/pull/39)
+- Use setup-uv@v7, the v10 major tag does not exist by @radusuciu in [#40](https://github.com/radusuciu/beets-quicktag/pull/40)
 ## [0.2.0] - 2026-09-13
 
 ### Bug Fixes
 
-- Update progress display when mpv duration property changes
-- Detect end of track and auto-advance playback
-- Degrade gracefully when the audio backend fails to initialise
-- Validate quicktag categories and report config errors clearly (#9)
-- Honour autoplay_at_launch when autoplay_on_track_change is on (#10)
-- Missing files, stale end-of-track messages, finished-track display (#11)
-- Show the Previous/Next bindings in the footer (#13)
+- Update progress display when mpv duration property changes by @radusuciu
+- Detect end of track and auto-advance playback by @radusuciu
+- Degrade gracefully when the audio backend fails to initialise by @radusuciu
+- Validate quicktag categories and report config errors clearly by @radusuciu in [#9](https://github.com/radusuciu/beets-quicktag/pull/9)
+- Honour autoplay_at_launch when autoplay_on_track_change is on by @radusuciu in [#10](https://github.com/radusuciu/beets-quicktag/pull/10)
+- Missing files, stale end-of-track messages, finished-track display by @radusuciu in [#11](https://github.com/radusuciu/beets-quicktag/pull/11)
+- Show the Previous/Next bindings in the footer by @radusuciu in [#13](https://github.com/radusuciu/beets-quicktag/pull/13)
 
 ### Documentation
 
-- Point README badges at radusuciu/beets-quicktag
-- Rewrite README usage and configuration, drop Codecov (#18)
-- Add an animated demo of the TUI to the README (#25)
-- Show adding a value and a category in the README demo (#28)
+- Point README badges at radusuciu/beets-quicktag by @radusuciu
+- Rewrite README usage and configuration, drop Codecov by @radusuciu in [#18](https://github.com/radusuciu/beets-quicktag/pull/18)
+- Add an animated demo of the TUI to the README by @radusuciu in [#25](https://github.com/radusuciu/beets-quicktag/pull/25)
+- Show adding a value and a category in the README demo by @radusuciu in [#28](https://github.com/radusuciu/beets-quicktag/pull/28)
 
 ### Features
 
-- Show the playing track in the terminal window title (#12)
-- Keep the audio device awake during pauses (opt-in) (#16)
-- Control playback and navigation with hardware media keys (#14)
-- Add categories and options from the TUI (#23)
-- Rename and delete categories and options from the TUI (#26)
-- Add sort_options to show and save category values sorted (#33)
+- Show the playing track in the terminal window title by @radusuciu in [#12](https://github.com/radusuciu/beets-quicktag/pull/12)
+- Keep the audio device awake during pauses (opt-in) by @radusuciu in [#16](https://github.com/radusuciu/beets-quicktag/pull/16)
+- Control playback and navigation with hardware media keys by @radusuciu in [#14](https://github.com/radusuciu/beets-quicktag/pull/14)
+- Add categories and options from the TUI by @radusuciu in [#23](https://github.com/radusuciu/beets-quicktag/pull/23)
+- Rename and delete categories and options from the TUI by @radusuciu in [#26](https://github.com/radusuciu/beets-quicktag/pull/26)
+- Add sort_options to show and save category values sorted by @radusuciu in [#33](https://github.com/radusuciu/beets-quicktag/pull/33)
 
 ### Miscellaneous Tasks
 
-- Fix release smoke test and changelog push
-- Restore changelog before checking out main; import smoke test from the wheel
-- Run the test workflow on pull requests against any branch
-- Add just with lint, typecheck and test recipes (#34)
+- Fix release smoke test and changelog push by @radusuciu
+- Restore changelog before checking out main; import smoke test from the wheel by @radusuciu
+- Run the test workflow on pull requests against any branch by @radusuciu
+- Add just with lint, typecheck and test recipes by @radusuciu in [#34](https://github.com/radusuciu/beets-quicktag/pull/34)
 
 ### Styling
 
-- Make ruff check and ruff format clean
+- Make ruff check and ruff format clean by @radusuciu
 
 ### Testing
 
-- Close the temporary beets library on teardown
-- Skip the widget init test when there is no audio device
-- Stop opening a real audio device in tests that mock the player (#15)
-- Open a copy of one migrated library instead of migrating per test (#35)
+- Close the temporary beets library on teardown by @radusuciu
+- Skip the widget init test when there is no audio device by @radusuciu
+- Stop opening a real audio device in tests that mock the player by @radusuciu in [#15](https://github.com/radusuciu/beets-quicktag/pull/15)
+- Open a copy of one migrated library instead of migrating per test by @radusuciu in [#35](https://github.com/radusuciu/beets-quicktag/pull/35)
 
 ### Build
 
-- Pin just_playback to a fork that releases its probe context (#17)
-- Install beets from PyPI, upgrade dependencies, drop pytest-cov (#22)
+- Pin just_playback to a fork that releases its probe context by @radusuciu in [#17](https://github.com/radusuciu/beets-quicktag/pull/17)
+- Install beets from PyPI, upgrade dependencies, drop pytest-cov by @radusuciu in [#22](https://github.com/radusuciu/beets-quicktag/pull/22)
 
 ### Dx
 
-- Add pytest-xdist for parallel test execution and optimize MP3 file generation fixture (#30)
-- Type check with ty (#24)
+- Add pytest-xdist for parallel test execution and optimize MP3 file generation fixture by @radusuciu in [#30](https://github.com/radusuciu/beets-quicktag/pull/30)
+- Type check with ty by @radusuciu in [#24](https://github.com/radusuciu/beets-quicktag/pull/24)
+
+### New Contributors
+
+- @radusuciu made their first contribution in [#37](https://github.com/radusuciu/beets-quicktag/pull/37)
 <!-- generated by git-cliff -->
