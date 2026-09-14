@@ -2,72 +2,81 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
 
 permissions:
   contents: write
   id-token: write
 
 jobs:
-  release:
+  check:
     runs-on: ubuntu-latest
-    environment: pypi
-    
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
+
+    - name: Check whether this version is tagged
+      id: check
+      run: |
+        version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+          echo "v$version is already released"
+          echo "release=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "v$version is not tagged yet; releasing"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+        fi
+
+  release:
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+
+    steps:
+    - uses: actions/checkout@v4
       with:
-        version: "latest"
-    
+        fetch-depth: 0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10
+
     - name: Set up Python
       run: uv python install 3.11
-    
+
     - name: Install dependencies
-      run: |
-        uv sync --dev
-    
-    - name: Generate changelog
-      run: |
-        uv run git-cliff --latest --strip header > RELEASE_NOTES.md
-        uv run git-cliff --output CHANGELOG.md
-    
+      run: uv sync --dev
+
+    - name: Generate release notes
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: uv run git-cliff --tag "v${{ needs.check.outputs.version }}" --unreleased --strip all > RELEASE_NOTES.md
+
     - name: Build package
-      run: |
-        uv build
-    
+      run: uv build
+
     - name: Test package installation
-      run: |
-        uv run --isolated --no-project --with dist/*.whl python -P -c "import beetsplug.quicktag; print('Package installed successfully')"
-    
+      run: uv run --isolated --no-project --with dist/*.whl python -P -c "import beetsplug.quicktag; print('Package installed successfully')"
+
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         attestations: true
-    
-    - name: Create GitHub Release
+
+    - name: Create GitHub release
       uses: softprops/action-gh-release@v2
       with:
+        tag_name: v${{ needs.check.outputs.version }}
         body_path: RELEASE_NOTES.md
         files: |
-          dist/*
+          dist/*.whl
+          dist/*.tar.gz
         draft: false
-        prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
-    
-    - name: Commit updated changelog
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git fetch origin main
-        rm -f CHANGELOG.md
-        git checkout -B main origin/main
-        uv run git-cliff --output CHANGELOG.md
-        git add CHANGELOG.md
-        if git diff --staged --quiet; then echo "No changes to commit"; else
-          git commit -m "docs: update changelog for ${{ github.ref_name }}"
-          git push origin main
-        fi
+        prerelease: ${{ contains(needs.check.outputs.version, 'rc') || contains(needs.check.outputs.version, 'b') || contains(needs.check.outputs.version, 'a') }}
