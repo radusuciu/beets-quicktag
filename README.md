@@ -137,7 +137,7 @@ This builds a throwaway beets library of generated tone files in a scratch direc
 
 Releases are automated with GitHub Actions and never need a local checkout:
 
-1. Run the **Release PR** workflow from the Actions tab. It picks the next version from the commits since the last tag (`feat` bumps minor, `fix` bumps patch; choose `patch`, `minor` or `major` in the dropdown to override), bumps `pyproject.toml` and `uv.lock` with `uv version`, regenerates `CHANGELOG.md` with git-cliff, and pushes a `release-vX.Y.Z` branch.
+1. Run the **Release PR** workflow from the Actions tab, or `just release` (`just release minor` to force a bump level). It picks the next version from the commits since the last tag (`feat` bumps minor, `fix` bumps patch; choose `patch`, `minor` or `major` in the dropdown to override), bumps `pyproject.toml` and `uv.lock` with `uv version`, regenerates `CHANGELOG.md` with git-cliff, and pushes a `release-vX.Y.Z` branch.
 2. Open the pull request from the link in the run summary (with a `RELEASE_PR_TOKEN` repository secret holding a personal access token, the workflow opens it for you). Review the changelog and merge like any other PR.
 3. On merge, the **Release** workflow sees that `pyproject.toml` names a version with no tag yet, builds the package, publishes it to PyPI via trusted publishing, and creates the `vX.Y.Z` tag and GitHub release with the changelog section as notes.
 

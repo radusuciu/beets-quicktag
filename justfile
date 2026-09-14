@@ -24,3 +24,14 @@ test *ARGS:
 
 # Run everything CI runs
 check: lint typecheck test
+
+# Start a release: run the Release PR workflow on GitHub and wait for it (BUMP: auto, patch, minor or major)
+release BUMP="auto":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    gh workflow run release-pr.yml --ref main -f bump={{BUMP}}
+    sleep 5
+    run=$(gh run list --workflow release-pr.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+    gh run watch "$run" --exit-status
+    echo "Open the pull request from the link in the run summary:"
+    gh run view "$run" --json url --jq .url
