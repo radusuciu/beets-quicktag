@@ -17,7 +17,7 @@ jobs:
       release: ${{ steps.check.outputs.release }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
 
@@ -41,12 +41,12 @@ jobs:
     environment: pypi
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
     - name: Set up Python
       run: uv python install 3.11
@@ -66,12 +66,12 @@ jobs:
       run: uv run --isolated --no-project --with dist/*.whl python -P -c "import beetsplug.quicktag; print('Package installed successfully')"
 
     - name: Publish to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
+      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
       with:
         attestations: true
 
     - name: Create GitHub release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
       with:
         tag_name: v${{ needs.check.outputs.version }}
         body_path: RELEASE_NOTES.md
