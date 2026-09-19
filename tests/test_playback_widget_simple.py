@@ -366,6 +366,22 @@ class TestPlaybackWidgetCore:
 
             mock_timer.stop.assert_called_once()
             mock_player.stop.assert_called_once()
+            mock_player.close.assert_called_once()
             assert widget.player is None
             assert widget._current_path is None
             assert widget._eof_check_timer is None
+
+    @pytest.mark.asyncio
+    async def test_terminate_player_closes_even_when_stop_fails(self) -> None:
+        """A failing stop() must not leak the audio device."""
+        with patch.object(PlaybackWidget, "log", Mock()):
+            widget = PlaybackWidget()
+
+            mock_player = Mock()
+            mock_player.stop.side_effect = RuntimeError("device gone")
+            widget.player = mock_player
+
+            await widget._terminate_player()
+
+            mock_player.close.assert_called_once()
+            assert widget.player is None

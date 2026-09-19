@@ -24,7 +24,7 @@ classifiers = [
 
 dependencies = [
     "beets>=2.3.0",
-    "just-playback>=0.1.8",
+    "just-playback>=1.0.0",
     "textual>=3.2.0",
 ]
 
@@ -53,9 +53,6 @@ dev = [
     "textual-dev>=1.7.0",
     "ty>=0.0.79",
 ]
-
-[tool.uv.sources]
-just-playback = { git = "https://github.com/radusuciu/just_playback.git", branch = "fix-device-probe-context-leak" }
 
 [tool.ruff]
 target-version = "py311"
