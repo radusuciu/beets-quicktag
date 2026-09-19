@@ -126,6 +126,19 @@ class PlaybackWidget(Widget):
             keep_alive.stop()
         except Exception as e:
             self.log.error(f"just_playback: Error stopping keep-alive stream: {e}")
+        self._close_player(keep_alive, "keep-alive stream")
+
+    def _close_player(self, player: Playback, what: str) -> None:
+        """Release `player`'s decoder and audio device.
+
+        just_playback only frees the native device on close() (or, as a
+        fallback, when the object is garbage collected), so closing here keeps
+        the device count from creeping up across widget lifetimes.
+        """
+        try:
+            player.close()
+        except Exception as e:
+            self.log.error(f"just_playback: Error closing {what}: {e}")
 
     async def on_unmount(self) -> None:
         await self._terminate_player()
@@ -164,6 +177,7 @@ class PlaybackWidget(Widget):
                 self.log.error(
                     f"Error stopping just_playback player in PlaybackWidget: {e}"
                 )
+            self._close_player(self.player, "player")
             self.player = None
         self._current_path = None
 

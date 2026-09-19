@@ -93,6 +93,7 @@ class TestKeepAliveEnabled:
             keep_alive = widget.keep_alive
             assert isinstance(keep_alive, Mock)
         keep_alive.stop.assert_called_once_with()
+        keep_alive.close.assert_called_once_with()
         assert widget.keep_alive is None
 
     @pytest.mark.asyncio
@@ -152,6 +153,7 @@ class TestKeepAliveFailures:
             assert widget.keep_alive is None
             broken.play.assert_not_called()
             broken.stop.assert_called_once_with()
+            broken.close.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_keep_alive_stop_failure_on_unmount_is_swallowed(
@@ -163,6 +165,7 @@ class TestKeepAliveFailures:
             keep_alive = widget.keep_alive
             assert isinstance(keep_alive, Mock)
             keep_alive.stop.side_effect = RuntimeError("device gone")
+        keep_alive.close.assert_called_once_with()
         assert widget.keep_alive is None
 
 
