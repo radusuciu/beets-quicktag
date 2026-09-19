@@ -23,9 +23,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "beets>=2.3.0",
+    "beets>=2.12.0",
     "just-playback>=1.0.0",
-    "textual>=3.2.0",
+    "textual>=8.0.0",
 ]
 
 [project.urls]
