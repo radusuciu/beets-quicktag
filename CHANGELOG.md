@@ -4,12 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.3.2] - 2026-09-19
+
+### Miscellaneous Tasks
+
+- Raise the beets and Textual floors to versions the suite passes on by @radusuciu in [#47](https://github.com/radusuciu/beets-quicktag/pull/47)
+
+### Build
+
+- **deps**: Bump the python-dependencies group with 4 updates by @dependabot[bot] in [#46](https://github.com/radusuciu/beets-quicktag/pull/46)
+
+### New Contributors
+
+- @dependabot[bot] made their first contribution in [#46](https://github.com/radusuciu/beets-quicktag/pull/46)
 ## [0.3.1] - 2026-09-19
 
 ### Miscellaneous Tasks
 
 - Let the Release PR workflow open the pull request by @radusuciu in [#42](https://github.com/radusuciu/beets-quicktag/pull/42)
 - Move to upstream just-playback 1.0.0 and close players on teardown by @radusuciu in [#43](https://github.com/radusuciu/beets-quicktag/pull/43)
+- Add Dependabot for uv and GitHub Actions, pin actions to commit SHAs by @radusuciu in [#45](https://github.com/radusuciu/beets-quicktag/pull/45)
 ## [0.3.0] - 2026-09-14
 
 ### Features
